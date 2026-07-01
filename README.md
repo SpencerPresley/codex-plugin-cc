@@ -5,6 +5,10 @@ Use Codex from inside Claude Code for code reviews or to delegate tasks to Codex
 This plugin is for Claude Code users who want an easy way to start using Codex from the workflow
 they already have.
 
+This is a Spencer-maintained fork/distribution of OpenAI's Apache-2.0 Codex plugin for Claude Code.
+It is not an official OpenAI marketplace. This fork keeps local workflow edits, including the
+`using-codex` skill and model-invokable review commands.
+
 <video src="./docs/plugin-demo.webm" controls muted playsinline autoplay></video>
 
 ## What You Get
@@ -30,7 +34,7 @@ Add the marketplace in Claude Code:
 Install the plugin:
 
 ```bash
-/plugin install codex@openai-codex
+/plugin install codex@spencer-codex
 ```
 
 Reload plugins:

@@ -1,20 +1,24 @@
 {
-  "name": "openai-codex",
+  "name": "spencer-codex",
   "owner": {
-    "name": "OpenAI"
+    "name": "Spencer Presley"
   },
   "metadata": {
-    "description": "Codex plugins to use in Claude Code for delegation and code review.",
-    "version": "1.0.5"
+    "description": "Spencer-maintained Codex plugin marketplace for Claude Code delegation and code review.",
+    "version": "1.0.6"
   },
   "plugins": [
     {
       "name": "codex",
+      "displayName": "Spencer Codex",
       "description": "Use Codex from Claude Code to review code or delegate tasks.",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "author": {
-        "name": "OpenAI"
+        "name": "OpenAI, modified by Spencer Presley"
       },
+      "homepage": "https://github.com/SpencerPresley/codex-plugin-cc",
+      "repository": "https://github.com/SpencerPresley/codex-plugin-cc",
+      "license": "Apache-2.0",
       "source": "./plugins/codex"
     }
   ]
