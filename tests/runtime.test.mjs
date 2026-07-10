@@ -1,13 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
+import net from "node:net";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
-import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
+import { cleanupTempDirs, initGitRepo, makeTempDir, run } from "./helpers.mjs";
 import { loadBrokerSession, saveBrokerSession } from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
+import { parseBrokerEndpoint } from "../plugins/codex/scripts/lib/broker-endpoint.mjs";
 import { resolveStateDir } from "../plugins/codex/scripts/lib/state.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -15,6 +17,12 @@ const PLUGIN_ROOT = path.join(ROOT, "plugins", "codex");
 const SCRIPT = path.join(PLUGIN_ROOT, "scripts", "codex-companion.mjs");
 const STOP_HOOK = path.join(PLUGIN_ROOT, "scripts", "stop-review-gate-hook.mjs");
 const SESSION_HOOK = path.join(PLUGIN_ROOT, "scripts", "session-lifecycle-hook.mjs");
+
+// Many tests below run `review`/`task`, which spawn a detached broker daemon
+// into their temp-dir cwd. Reap those brokers (and their temp dirs) once the
+// suite finishes so they don't leak past `node --test`. helpers.mjs also arms a
+// process-exit fallback, so this covers crashed/interrupted runs too.
+after(cleanupTempDirs);
 
 async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 50 } = {}) {
   const start = Date.now();
@@ -918,6 +926,55 @@ test("task using the shared broker still completes when Codex spawns subagents",
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "Handled the requested task.\nTask prompt accepted.\n");
+});
+
+test("shared broker reaps itself after the idle timeout but not while a client is connected", async () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "README.md"), "hello again\n");
+
+  const idleMs = 1000;
+  const env = { ...buildEnv(binDir), CODEX_COMPANION_BROKER_IDLE_MS: String(idleMs) };
+
+  // Warm the shared broker the way a real command does: a detached grandchild
+  // spawned by the CLI, not directly by the test process.
+  const review = run("node", [SCRIPT, "review"], { cwd: repo, env });
+  assert.equal(review.status, 0, review.stderr);
+  const session = loadBrokerSession(repo);
+  if (!session) {
+    return; // no app-server support in this environment
+  }
+  assert.equal(typeof session.pid, "number");
+
+  const isAlive = (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Hold a raw connection open past the idle window: a connected client must
+  // keep the broker alive (a running background job holds its socket the same way).
+  const target = parseBrokerEndpoint(session.endpoint);
+  const held = net.createConnection({ path: target.path });
+  await new Promise((resolve, reject) => {
+    held.once("connect", resolve);
+    held.once("error", reject);
+  });
+  await new Promise((resolve) => setTimeout(resolve, idleMs * 2));
+  assert.equal(isAlive(session.pid), true, "broker must stay up while a client is connected");
+
+  // Drop the client; with zero clients it should reap within a few idle windows.
+  held.destroy();
+  await waitFor(() => (isAlive(session.pid) ? null : true), { timeoutMs: 6000, intervalMs: 100 });
+  assert.equal(isAlive(session.pid), false, "broker should shut down after idle with no clients");
 });
 
 test("task --background enqueues a detached worker and exposes per-job status", async () => {
