@@ -403,7 +403,7 @@ Expected:
 
 - `npm test`: zero failing tests.
 - `npm run build`: TypeScript compilation exits 0.
-- `npm run check-version`: fork package and marketplace versions remain aligned at `1.0.7`.
+- `npm run check-version`: fork package and marketplace versions remain aligned at the release version.
 - `git diff --check`: no whitespace errors.
 
 Do not run a live Codex review matrix or subagent pressure tests. The request-shape assertions prove the plugin-owned behavior; OpenAI's reviewer internals remain upstream-owned.
