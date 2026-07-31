@@ -145,6 +145,7 @@ export function resolveReviewTarget(cwd, options = {}) {
       mode: "branch",
       label: `branch diff against ${baseRef}`,
       baseRef,
+      comparison: buildBranchComparison(cwd, baseRef),
       explicit: true
     };
   }
@@ -169,6 +170,7 @@ export function resolveReviewTarget(cwd, options = {}) {
       mode: "branch",
       label: `branch diff against ${detectedBase}`,
       baseRef: detectedBase,
+      comparison: buildBranchComparison(cwd, detectedBase),
       explicit: true
     };
   }
@@ -186,6 +188,7 @@ export function resolveReviewTarget(cwd, options = {}) {
     mode: "branch",
     label: `branch diff against ${detectedBase}`,
     baseRef: detectedBase,
+    comparison: buildBranchComparison(cwd, detectedBase),
     explicit: false
   };
 }
@@ -322,7 +325,7 @@ export function collectReviewContext(cwd, target, options = {}) {
         diffBytes <= maxInlineDiffBytes);
     details = collectWorkingTreeContext(repoRoot, state, { includeDiff });
   } else {
-    const comparison = buildBranchComparison(repoRoot, target.baseRef);
+    const comparison = target.comparison ?? buildBranchComparison(repoRoot, target.baseRef);
     const fileCount = gitChecked(repoRoot, ["diff", "--name-only", comparison.commitRange]).stdout.trim().split("\n").filter(Boolean).length;
     diffBytes = measureGitOutputBytes(
       repoRoot,

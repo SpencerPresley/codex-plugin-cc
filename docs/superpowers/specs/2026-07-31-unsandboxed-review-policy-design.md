@@ -46,7 +46,7 @@ Instead, the plugin sends a built-in `custom` review target whose instructions c
 1. The same target definition currently represented by `uncommittedChanges` or `baseBranch`.
 2. The shared review workspace contract.
 
-For a branch review, the custom instructions include the already-resolved base branch and merge-base SHA so Codex inspects the same comparison the plugin reports to the user. The command remains non-steerable: user-supplied focus text is still rejected and routed to adversarial review.
+For a branch review, the plugin resolves the base branch and merge-base SHA before building the custom instructions so Codex inspects the same comparison the plugin reports to the user. The command remains non-steerable: user-supplied focus text is still rejected and routed to adversarial review.
 
 ## Adversarial Review
 

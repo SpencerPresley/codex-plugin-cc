@@ -181,11 +181,15 @@ function emitTurnCompletedLater(threadId, turnId, item, delayMs) {
 }
 
 function nativeReviewText(target) {
+  if (target.type === "custom") {
+    const baseMatch = target.instructions.match(/base branch "([^"]+)"/);
+    if (baseMatch) {
+      return "Reviewed changes against " + baseMatch[1] + ".\\nNo material issues found.";
+    }
+    return "Reviewed uncommitted changes.\\nNo material issues found.";
+  }
   if (target.type === "baseBranch") {
     return "Reviewed changes against " + target.branch + ".\\nNo material issues found.";
-  }
-  if (target.type === "custom") {
-    return "Reviewed custom target.\\nNo material issues found.";
   }
   return "Reviewed uncommitted changes.\\nNo material issues found.";
 }
@@ -312,6 +316,8 @@ rl.on("line", (line) => {
         if (requiresExperimental("persistExtendedHistory", message, state) || requiresExperimental("persistFullHistory", message, state)) {
           throw new Error("thread/start.persistFullHistory requires experimentalApi capability");
         }
+        state.lastThreadStart = message.params;
+        saveState(state);
         const thread = nextThread(state, message.params.cwd, message.params.ephemeral);
         send({ id: message.id, result: { thread: buildThread(thread), model: message.params.model || "gpt-5.4", modelProvider: "openai", serviceTier: null, cwd: thread.cwd, approvalPolicy: "never", sandbox: { type: "readOnly", access: { type: "fullAccess" }, networkAccess: false }, reasoningEffort: null } });
         send({ method: "thread/started", params: { thread: { id: thread.id } } });
@@ -405,6 +411,8 @@ rl.on("line", (line) => {
       }
 
       case "review/start": {
+        state.lastReviewStart = message.params;
+        saveState(state);
         const thread = ensureThread(state, message.params.threadId);
         let reviewThread = thread;
         if (message.params.delivery === "detached") {

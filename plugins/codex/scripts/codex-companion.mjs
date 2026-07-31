@@ -238,12 +238,17 @@ async function handleSetup(argv) {
   outputResult(options.json ? finalReport : renderSetupReport(finalReport), options.json);
 }
 
+function loadReviewWorkspacePolicy() {
+  return loadPromptTemplate(ROOT_DIR, "review-workspace-policy").trim();
+}
+
 function buildAdversarialReviewPrompt(context, focusText) {
   const template = loadPromptTemplate(ROOT_DIR, "adversarial-review");
   return interpolateTemplate(template, {
     REVIEW_KIND: "Adversarial Review",
     TARGET_LABEL: context.target.label,
     USER_FOCUS: focusText || "No extra focus provided.",
+    REVIEW_WORKSPACE_POLICY: loadReviewWorkspacePolicy(),
     REVIEW_COLLECTION_GUIDANCE: context.collectionGuidance,
     REVIEW_INPUT: context.content
   });
@@ -257,15 +262,26 @@ function ensureCodexAvailable(cwd) {
 }
 
 function buildNativeReviewTarget(target) {
+  let targetInstructions;
+
   if (target.mode === "working-tree") {
-    return { type: "uncommittedChanges" };
+    targetInstructions =
+      "Review the current code changes, including staged, unstaged, and untracked files. Provide prioritized, actionable findings.";
+  } else if (target.mode === "branch" && target.comparison?.mergeBase) {
+    targetInstructions = [
+      `Review the code changes against base branch ${JSON.stringify(target.baseRef)}.`,
+      `The merge-base commit is ${target.comparison.mergeBase}.`,
+      `Run git diff ${target.comparison.mergeBase} to inspect the changes that would merge into that base branch.`,
+      "Provide prioritized, actionable findings."
+    ].join("\n");
+  } else {
+    return null;
   }
 
-  if (target.mode === "branch") {
-    return { type: "baseBranch", branch: target.baseRef };
-  }
-
-  return null;
+  return {
+    type: "custom",
+    instructions: `${targetInstructions}\n\n${loadReviewWorkspacePolicy()}`
+  };
 }
 
 function validateNativeReviewRequest(target, focusText) {
@@ -411,7 +427,7 @@ async function executeReviewRun(request) {
   const result = await runAppServerTurn(context.repoRoot, {
     prompt,
     model: request.model,
-    sandbox: "read-only",
+    sandbox: "danger-full-access",
     outputSchema: readOutputSchema(REVIEW_SCHEMA),
     onProgress: request.onProgress
   });

@@ -163,6 +163,14 @@ test("review renders a no-findings result from app-server review/start", () => {
   assert.equal(result.status, 0);
   assert.match(result.stdout, /Reviewed uncommitted changes/);
   assert.match(result.stdout, /No material issues found/);
+  const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  assert.equal(state.lastThreadStart.approvalPolicy, "never");
+  assert.equal(state.lastThreadStart.sandbox, "danger-full-access");
+  assert.equal(state.lastReviewStart.target.type, "custom");
+  assert.match(state.lastReviewStart.target.instructions, /Do not intentionally edit/i);
+  assert.match(state.lastReviewStart.target.instructions, /incidental/i);
+  assert.match(state.lastReviewStart.target.instructions, /ruff check --fix/i);
+  assert.match(state.lastReviewStart.target.instructions, /operating-system temporary directory/i);
 });
 
 test("task runs when the active provider does not require OpenAI login", () => {
@@ -369,9 +377,13 @@ test("review accepts the quoted raw argument style for built-in base-branch revi
     env: buildEnv(binDir)
   });
 
-  assert.equal(result.status, 0);
+  assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Reviewed changes against main/);
   assert.match(result.stdout, /No material issues found/);
+  const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  assert.equal(state.lastReviewStart.target.type, "custom");
+  assert.match(state.lastReviewStart.target.instructions, /base branch "main"/);
+  assert.match(state.lastReviewStart.target.instructions, /merge-base commit is [0-9a-f]{40}/i);
 });
 
 test("adversarial review renders structured findings over app-server turn/start", () => {
@@ -392,6 +404,12 @@ test("adversarial review renders structured findings over app-server turn/start"
 
   assert.equal(result.status, 0);
   assert.match(result.stdout, /Missing empty-state guard/);
+  const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  assert.equal(state.lastThreadStart.approvalPolicy, "never");
+  assert.equal(state.lastThreadStart.sandbox, "danger-full-access");
+  assert.match(state.lastTurnStart.prompt, /<review_workspace_policy>/);
+  assert.match(state.lastTurnStart.prompt, /incidental/i);
+  assert.match(state.lastTurnStart.prompt, /ruff check --fix/i);
 });
 
 test("adversarial review accepts the same base-branch targeting as review", () => {
@@ -722,6 +740,8 @@ test("write task output focuses on the Codex result without generic follow-up hi
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "Handled the requested task.\nTask prompt accepted.\n");
+  const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  assert.equal(state.lastThreadStart.sandbox, "workspace-write");
 });
 
 test("task --resume acts like --resume-last without leaking the flag into the prompt", () => {

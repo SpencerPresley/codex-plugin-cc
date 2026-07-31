@@ -9,6 +9,8 @@ Target: {{TARGET_LABEL}}
 User focus: {{USER_FOCUS}}
 </task>
 
+{{REVIEW_WORKSPACE_POLICY}}
+
 <operating_stance>
 Default to skepticism.
 Assume the change can fail in subtle, high-cost, or user-visible ways until the evidence says otherwise.
