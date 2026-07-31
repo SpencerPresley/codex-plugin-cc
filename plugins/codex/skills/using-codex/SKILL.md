@@ -1,13 +1,13 @@
 ---
 name: using-codex
-description: Comprehensive guide to using the Codex plugin from Claude Code — every command (review, adversarial-review, rescue, setup), their flags, the review output schema, when to use each, and how to prompt GPT-5.5 Codex. Use before running a Codex review or delegating work to Codex.
+description: Use when running Codex reviews or delegating work through the Codex Claude Code plugin, especially when choosing review, adversarial-review, or rescue and when handling their results.
 ---
 
 # Using Codex from Claude Code
 
 Codex (OpenAI GPT-5.5) is a second AI collaborator. Two shapes of use:
 
-- **Review** (`review`, `adversarial-review`) — **read-only** critique of your code. Never edits.
+- **Review** (`review`, `adversarial-review`) — repository-preserving critique that does not intentionally edit or fix the reviewed work.
 - **Delegate** (`rescue`) — **write-capable** work handed to a Codex agent (debug, fix, implement, investigate).
 
 In *this* build the review commands are model-invokable, so you (Claude) can run them directly.
@@ -16,21 +16,23 @@ In *this* build the review commands are model-invokable, so you (Claude) can run
 
 ## Critical rules (non-negotiable)
 
-- **Reviews are READ-ONLY. Never auto-apply fixes.** After presenting `review` / `adversarial-review` findings, STOP. Do not edit a single file — even an obvious fix. Explicitly ask the user which findings, if any, to fix.
+- **Reviews are repository-preserving, not filesystem read-only.** Codex runs without filesystem sandboxing so it can use its full toolset. It must not intentionally edit or fix the reviewed work, but legitimate inspection and verification commands may create caches, logs, build output, coverage data, or scratch probes. Those incidental writes are acceptable and are not a reason to panic, abandon the review, or silently implement cleanup. After presenting findings, STOP and ask the user which findings, if any, to fix.
 - **Return Codex output verbatim.** No paraphrasing or summarizing of review/rescue output. Present findings ordered by severity, with file paths and line numbers exactly as reported.
-- **Know what writes.** `rescue` is write-capable (Codex edits the workspace). `review`/`adversarial-review` never write.
+- **Know what intentionally writes.** `rescue` is write-capable and may edit the workspace. `review` and `adversarial-review` must not intentionally change reviewed files, configuration, the Git index, refs, or commits.
 - **Don't improvise auth.** If Codex isn't set up/authenticated, send the user to `/codex:setup`.
+
+Review commands may use a dedicated temporary directory for probes. Repo-native checks may also run in the repository when that produces better evidence, even if they leave incidental artifacts such as `.ruff_cache/`. Do not run commands intended to rewrite reviewed work, such as `ruff check --fix`, `ruff format`, snapshot updates, codemods, or lockfile-updating package-manager operations.
 
 ## Commands you can invoke
 
-### `codex:review` — native code review (read-only)
+### `codex:review` — native code review (repository-preserving)
 Reviews local git state.
 - Flags: `--wait` | `--background`, `--base <ref>`, `--scope auto|working-tree|branch`.
 - No focus text, no staged-only/unstaged-only.
 - Use for: a straight defect review of uncommitted changes (`--scope working-tree`) or a branch vs base (`--base main`).
 - Examples: `/codex:review`, `/codex:review --base main`, `/codex:review --background`.
 
-### `codex:adversarial-review` — challenge review (read-only)
+### `codex:adversarial-review` — challenge review (repository-preserving)
 Same targets + `--base`, but it **attacks the approach/design/tradeoffs/assumptions** ("break confidence in the change"), not just defects.
 - **Unlike `review`, it accepts extra focus text** after the flags.
 - Use for: pre-ship pressure-testing — is this the right design? what breaks under load/partial-failure/rollback?

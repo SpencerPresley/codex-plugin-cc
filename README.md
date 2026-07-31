@@ -100,7 +100,7 @@ Examples:
 /codex:review --background
 ```
 
-This command is read-only and will not perform any changes. When run in the background you can use [`/codex:status`](#codexstatus) to check on the progress and [`/codex:cancel`](#codexcancel) to cancel the ongoing task.
+This command is repository-preserving: it runs Codex without filesystem sandboxing but does not intentionally edit or fix the reviewed work. Inspection and verification commands may create incidental caches, logs, build output, coverage data, or scratch probes in a temporary directory; those artifacts do not invalidate the review. When run in the background you can use [`/codex:status`](#codexstatus) to check on the progress and [`/codex:cancel`](#codexcancel) to cancel the ongoing task.
 
 ### `/codex:adversarial-review`
 
@@ -125,7 +125,7 @@ Examples:
 /codex:adversarial-review --background look for race conditions and question the chosen approach
 ```
 
-This command is read-only. It does not fix code.
+This command is repository-preserving: it runs Codex without filesystem sandboxing but does not intentionally edit or fix the reviewed work. It may tolerate incidental tool output or use a temporary directory for scratch probes, but it does not run commands whose purpose is to rewrite reviewed code.
 
 ### `/codex:rescue`
 

@@ -70,6 +70,24 @@ test("adversarial review command uses AskUserQuestion and background Bash while 
   assert.match(source, /can still take extra focus text after the flags/i);
 });
 
+test("review documentation describes the unsandboxed repository-preserving contract", () => {
+  const skill = read("skills/using-codex/SKILL.md");
+  const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
+
+  assert.match(skill, /^description: Use when /m);
+  for (const source of [skill, readme]) {
+    assert.match(source, /without filesystem sandboxing/i);
+    assert.match(source, /repository-preserving/i);
+    assert.match(source, /incidental/i);
+    assert.match(source, /scratch|temporary directory/i);
+    assert.match(source, /does not intentionally (?:edit|alter)|must not intentionally edit/i);
+  }
+
+  assert.doesNotMatch(skill, /Reviews are READ-ONLY/i);
+  assert.doesNotMatch(skill, /review \(read-only\)|challenge review \(read-only\)/i);
+  assert.doesNotMatch(readme, /This command is read-only/i);
+});
+
 test("continue is not exposed as a user-facing command", () => {
   const commandFiles = fs.readdirSync(path.join(PLUGIN_ROOT, "commands")).sort();
   assert.deepEqual(commandFiles, [
