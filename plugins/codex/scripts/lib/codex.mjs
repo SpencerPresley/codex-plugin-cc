@@ -631,6 +631,15 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
       state.threadTurnIds.set(state.threadId, state.turnId);
     }
     for (const message of state.bufferedNotifications) {
+      // Thread identity notifications carry the subagent's name and arrive
+      // before that thread is associated with this turn, so they get the same
+      // exemption here as in the live handler above. Without it, any
+      // notification that lands before `turn/start` resolves loses its label and
+      // every later log line for that subagent falls back to a raw thread id.
+      if (message.method === "thread/started" || message.method === "thread/name/updated") {
+        applyTurnNotification(state, message);
+        continue;
+      }
       if (belongsToTurn(state, message)) {
         applyTurnNotification(state, message);
       } else {

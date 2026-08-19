@@ -2770,3 +2770,28 @@ test("a completed adversarial review keeps its verdict and records the assessmen
   assert.equal(payload.assessments.length >= 1, true);
   assert.equal(payload.assessments.at(-1).text, payload.rawOutput);
 });
+
+test("subagent labels survive notifications that arrive before the turn is acknowledged", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "with-subagent-early-thread-started");
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+
+  const result = run("node", [SCRIPT, "task", "challenge the current design"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const stateDir = resolveStateDir(repo);
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
+  // `thread/started` for a subagent legitimately arrives before the parent turn
+  // is acknowledged, so it gets buffered. If the replay drops it, every later
+  // line for that subagent degrades to a raw thread id.
+  assert.match(log, /Subagent design-challenger:/);
+  assert.equal(/Subagent thr_\d+/.test(log), false);
+});

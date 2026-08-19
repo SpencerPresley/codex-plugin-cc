@@ -464,6 +464,21 @@ rl.on("line", (line) => {
 	          prompt
 	        };
 	        saveState(state);
+	        if (BEHAVIOR === "with-subagent-early-thread-started") {
+	          const earlyThread = nextThread(state, thread.cwd, true);
+	          const earlyRecord = ensureThread(state, earlyThread.id);
+	          earlyRecord.name = "design-challenger";
+	          saveState(state);
+	          state.pendingEarlySubThreadId = earlyThread.id;
+	          saveState(state);
+	          send({
+	            method: "thread/started",
+	            params: {
+	              thread: { ...buildThread(earlyRecord), name: "design-challenger", agentNickname: "design-challenger" }
+	            }
+	          });
+	        }
+
 	        send({ id: message.id, result: { turn: buildTurn(turnId) } });
 
         const payload = message.params.outputSchema && message.params.outputSchema.properties && message.params.outputSchema.properties.verdict
@@ -473,15 +488,21 @@ rl.on("line", (line) => {
         if (
           BEHAVIOR === "with-subagent" ||
           BEHAVIOR === "with-late-subagent-message" ||
-          BEHAVIOR === "with-subagent-no-main-turn-completed"
+          BEHAVIOR === "with-subagent-no-main-turn-completed" ||
+          BEHAVIOR === "with-subagent-early-thread-started"
         ) {
-          const subThread = nextThread(state, thread.cwd, true);
+          const earlyAnnounced = BEHAVIOR === "with-subagent-early-thread-started";
+          const subThread = earlyAnnounced
+            ? { id: state.pendingEarlySubThreadId }
+            : nextThread(state, thread.cwd, true);
           const subThreadRecord = ensureThread(state, subThread.id);
           subThreadRecord.name = "design-challenger";
           saveState(state);
           const subTurnId = nextTurnId(state);
 
-          send({ method: "thread/started", params: { thread: { ...buildThread(subThreadRecord), name: "design-challenger", agentNickname: "design-challenger" } } });
+          if (!earlyAnnounced) {
+            send({ method: "thread/started", params: { thread: { ...buildThread(subThreadRecord), name: "design-challenger", agentNickname: "design-challenger" } } });
+          }
           send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
           send({
             method: "item/started",
