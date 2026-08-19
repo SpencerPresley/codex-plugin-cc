@@ -278,12 +278,20 @@ function resolveTaskSandbox({ sandbox, write }) {
  * record says `write: false` while Codex is editing files. Reject the
  * contradiction, and let an explicitly writable sandbox imply write-capable so
  * the stored job tells the truth.
+ *
+ * `write` is an intent flag, not just a capability one -- status offers
+ * "review the changes" follow-ups off the back of it -- so an internal caller
+ * that asked for a wide sandbox to *inspect* with (the stop-time review gate)
+ * keeps its own declared intent.
  */
-function reconcileWriteAndSandbox({ write, sandbox }) {
+function reconcileWriteAndSandbox({ write, sandbox, internal = false }) {
   if (write && sandbox === "read-only") {
     throw new Error(
       "`--write` cannot be combined with `--sandbox read-only`. Drop one: --write asks Codex to change the workspace, --sandbox read-only forbids it."
     );
+  }
+  if (internal) {
+    return write;
   }
   const sandboxAllowsWrites = sandbox === "workspace-write" || sandbox === "danger-full-access";
   return write || sandboxAllowsWrites;
@@ -570,7 +578,7 @@ async function executeTaskRun(request) {
       throw new Error("No previous Codex task thread was found for this repository.");
     }
     resumeThreadId = latestThread.id;
-  } else if (request.withSession || request.sessionSource) {
+  } else if (request.withSession) {
     // Hand over what Claude already knows instead of making Codex rediscover it.
     // The plugin can already import a Claude transcript into a Codex thread
     // (`/codex:transfer`); starting the task on that thread means the delegate
@@ -931,8 +939,9 @@ async function handleTask(argv) {
   const model = normalizeRequestedModel(options.model);
   const effort = normalizeReasoningEffort(options.effort);
   const sandbox = normalizeSandboxMode(options.sandbox);
+  const internalCaller = process.env[INTERNAL_CALLER_ENV] === "1";
   const noWorkspacePolicy = Boolean(options["no-workspace-policy"]);
-  if (noWorkspacePolicy && process.env[INTERNAL_CALLER_ENV] !== "1") {
+  if (noWorkspacePolicy && !internalCaller) {
     throw new Error(
       "`--no-workspace-policy` is internal to the stop-time review gate, which supplies its own workspace contract. A task that can write must carry one."
     );
@@ -950,7 +959,7 @@ async function handleTask(argv) {
       "Choose either --resume/--resume-last or --with-session. A resumed Codex thread already carries its own history."
     );
   }
-  const write = reconcileWriteAndSandbox({ write: Boolean(options.write), sandbox });
+  const write = reconcileWriteAndSandbox({ write: Boolean(options.write), sandbox, internal: internalCaller });
   const taskMetadata = buildTaskRunMetadata({
     prompt,
     resumeLast

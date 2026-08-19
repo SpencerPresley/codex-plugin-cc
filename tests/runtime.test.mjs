@@ -2963,3 +2963,66 @@ test("status omits a log path once the job cap has deleted the file", () => {
   assert.match(live.stdout, /Log: .*review-live\.log/);
   assert.equal(/Log:/.test(pruned.stdout), false);
 });
+
+test("the stop gate's own run is not recorded as write-capable work", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "adversarial-clean");
+  initGitRepo(repo);
+
+  const setup = run("node", [SCRIPT, "setup", "--enable-review-gate", "--json"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(setup.status, 0, setup.stderr);
+
+  const gate = run("node", [STOP_HOOK], {
+    cwd: repo,
+    env: buildEnv(binDir),
+    input: JSON.stringify({
+      cwd: repo,
+      session_id: "sess-gate-label",
+      last_assistant_message: "I refactored the retry logic."
+    })
+  });
+  assert.equal(gate.status, 0, gate.stderr);
+
+  const stateDir = resolveStateDir(repo);
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  const gateJob = state.jobs.find((job) => job.title?.includes("Stop Gate"));
+  // The gate takes a wide sandbox in order to *inspect*. `write` drives
+  // "review the changes" follow-ups, so labelling the gate write-capable would
+  // suggest reviewing edits it is forbidden to make.
+  assert.equal(gateJob.write, false);
+
+  const status = run("node", [SCRIPT, "status", gateJob.id], { cwd: repo, env: buildEnv(binDir) });
+  assert.equal(/Review changes/.test(status.stdout), false);
+});
+
+test("--session-source alone does not turn a plain task into a session handoff", () => {
+  const home = makeTempDir();
+  const repo = path.join(home, "repo");
+  const binDir = makeTempDir();
+  fs.mkdirSync(repo, { recursive: true });
+  const projectDir = path.join(home, ".claude", "projects", "-repo");
+  fs.mkdirSync(projectDir, { recursive: true });
+  const sourcePath = path.join(projectDir, "sess-unused.jsonl");
+  fs.writeFileSync(
+    sourcePath,
+    `${JSON.stringify({ type: "user", cwd: repo, message: { role: "user", content: "hi" } })}\n`,
+    "utf8"
+  );
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const result = run("node", [SCRIPT, "task", "--session-source", sourcePath, "investigate"], {
+    cwd: repo,
+    env: { ...buildEnv(binDir), HOME: home, CODEX_HOME: path.join(home, ".codex") }
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const fakeState = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  // Importing a transcript is what --with-session asks for. Doing it because a
+  // path happened to be present would silently change what the run is.
+  assert.equal(fakeState.lastExternalAgentImport, undefined);
+});
