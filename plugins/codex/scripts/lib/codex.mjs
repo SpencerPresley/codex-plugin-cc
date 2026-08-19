@@ -59,27 +59,43 @@ function cleanCodexStderr(stderr) {
     .join("\n");
 }
 
+/**
+ * `undefined` keeps the historical read-only default; explicit `null` means
+ * "inherit the user's Codex configuration" and is sent by omitting the field,
+ * because `thread/start`'s `sandbox` is optional and falls back to config.
+ */
+function applySandboxParam(params, sandbox) {
+  if (sandbox === null) {
+    return params;
+  }
+  return { ...params, sandbox: sandbox ?? "read-only" };
+}
+
 /** @returns {ThreadStartParams} */
 function buildThreadParams(cwd, options = {}) {
-  return {
-    cwd,
-    model: options.model ?? null,
-    approvalPolicy: options.approvalPolicy ?? "never",
-    sandbox: options.sandbox ?? "read-only",
-    serviceName: SERVICE_NAME,
-    ephemeral: options.ephemeral ?? true
-  };
+  return applySandboxParam(
+    {
+      cwd,
+      model: options.model ?? null,
+      approvalPolicy: options.approvalPolicy ?? "never",
+      serviceName: SERVICE_NAME,
+      ephemeral: options.ephemeral ?? true
+    },
+    options.sandbox
+  );
 }
 
 /** @returns {ThreadResumeParams} */
 function buildResumeParams(threadId, cwd, options = {}) {
-  return {
-    threadId,
-    cwd,
-    model: options.model ?? null,
-    approvalPolicy: options.approvalPolicy ?? "never",
-    sandbox: options.sandbox ?? "read-only"
-  };
+  return applySandboxParam(
+    {
+      threadId,
+      cwd,
+      model: options.model ?? null,
+      approvalPolicy: options.approvalPolicy ?? "never"
+    },
+    options.sandbox
+  );
 }
 
 /** @returns {UserInput[]} */

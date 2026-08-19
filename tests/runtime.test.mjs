@@ -741,7 +741,65 @@ test("write task output focuses on the Codex result without generic follow-up hi
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "Handled the requested task.\nTask prompt accepted.\n");
   const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
-  assert.equal(state.lastThreadStart.sandbox, "workspace-write");
+  // A write-capable rescue inherits the user's own Codex sandbox configuration:
+  // the plugin sends no override at all rather than narrowing it to
+  // workspace-write, which blocks the network the fix usually needs.
+  assert.equal(Object.prototype.hasOwnProperty.call(state.lastThreadStart, "sandbox"), false);
+  assert.equal(state.lastThreadStart.approvalPolicy, "never");
+  // The reach comes with a stated contract instead of a narrower cage.
+  assert.match(state.lastTurnStart.prompt, /<task_workspace_policy>/);
+  assert.match(state.lastTurnStart.prompt, /fix the failing test/);
+});
+
+test("task without --write still runs read-only and carries no workspace policy", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const result = run("node", [SCRIPT, "task", "investigate the failing test"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  assert.equal(state.lastThreadStart.sandbox, "read-only");
+  // Asking for a non-mutating run is an explicit choice; do not lecture it about
+  // a workspace it cannot write to anyway.
+  assert.equal(/<task_workspace_policy>/.test(state.lastTurnStart.prompt), false);
+});
+
+test("task --sandbox pins an explicit mode and rejects unknown ones", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const pinned = run("node", [SCRIPT, "task", "--sandbox", "danger-full-access", "reproduce the crash"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(pinned.status, 0, pinned.stderr);
+  const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  assert.equal(state.lastThreadStart.sandbox, "danger-full-access");
+  assert.match(state.lastTurnStart.prompt, /<task_workspace_policy>/);
+
+  const inherited = run("node", [SCRIPT, "task", "--sandbox", "inherit", "reproduce the crash"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(inherited.status, 0, inherited.stderr);
+  const inheritedState = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  assert.equal(Object.prototype.hasOwnProperty.call(inheritedState.lastThreadStart, "sandbox"), false);
+
+  const rejected = run("node", [SCRIPT, "task", "--sandbox", "wide-open", "reproduce the crash"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /Unsupported sandbox "wide-open"/);
+  assert.match(rejected.stderr, /read-only, workspace-write, danger-full-access, inherit/);
 });
 
 test("task --resume acts like --resume-last without leaking the flag into the prompt", () => {
@@ -1044,9 +1102,14 @@ test("task --background enqueues a detached worker and exposes per-job status", 
   assert.equal(resultPayload.job.id, launchPayload.jobId);
   assert.equal(resultPayload.job.status, "completed");
   assert.match(resultPayload.storedJob.rendered, /Handled the requested task/);
+  // The detached worker rebuilds the run from the stored request, so the sandbox
+  // decision and the workspace contract have to survive that round trip.
+  const fakeState = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  assert.equal(Object.prototype.hasOwnProperty.call(fakeState.lastThreadStart, "sandbox"), false);
+  assert.match(fakeState.lastTurnStart.prompt, /<task_workspace_policy>/);
 });
 
-test("review rejects focus text because it is native-review only", () => {
+test("review rejects focus text so its results stay comparable across runs", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
   installFakeCodex(binDir);
@@ -2507,4 +2570,70 @@ test("background launch prints the live log path so the run can be followed", ()
   // Progress is appended to this file as it happens, so it is the only way to
   // watch a background run without polling status.
   assert.match(launched.stdout, /Live log: .+\.log/);
+});
+
+test("task --with-session hands Codex the Claude transcript instead of a bare prompt", () => {
+  const home = makeTempDir();
+  const repo = path.join(home, "repo");
+  const binDir = makeTempDir();
+  const sessionId = "sess-handoff";
+  fs.mkdirSync(repo, { recursive: true });
+  const projectDir = path.join(home, ".claude", "projects", "-repo");
+  fs.mkdirSync(projectDir, { recursive: true });
+  const sourcePath = path.join(projectDir, `${sessionId}.jsonl`);
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  fs.writeFileSync(
+    sourcePath,
+    [
+      { type: "user", cwd: repo, message: { role: "user", content: "The integration test is flaky" } },
+      { type: "assistant", cwd: repo, message: { role: "assistant", content: "Ruled out the retry wrapper" } }
+    ]
+      .map((entry) => JSON.stringify(entry))
+      .join("\n") + "\n",
+    "utf8"
+  );
+
+  const env = {
+    ...buildEnv(binDir),
+    HOME: home,
+    CODEX_HOME: path.join(home, ".codex"),
+    CODEX_COMPANION_TRANSCRIPT_PATH: sourcePath
+  };
+
+  const result = run("node", [SCRIPT, "task", "--write", "--with-session", "fix the flaky test"], {
+    cwd: repo,
+    env
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const fakeState = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  // The task runs on the thread the transcript was imported into, so Codex
+  // starts from what Claude already established.
+  assert.equal(fakeState.lastExternalAgentImport.sourcePath, fs.realpathSync(sourcePath));
+  assert.equal(fakeState.lastThreadResume.threadId, "thr_1");
+  assert.equal(fakeState.lastTurnStart.threadId, "thr_1");
+  assert.deepEqual(
+    fakeState.threads[0].visibleMessages.map((message) => message.text),
+    ["The integration test is flaky", "Ruled out the retry wrapper"]
+  );
+  // It is still a first turn, so the workspace contract goes with it.
+  assert.match(fakeState.lastTurnStart.prompt, /fix the flaky test/);
+  assert.match(fakeState.lastTurnStart.prompt, /<task_workspace_policy>/);
+});
+
+test("task rejects combining --with-session with a resumed Codex thread", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const result = run("node", [SCRIPT, "task", "--with-session", "--resume-last", "keep going"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Choose either --resume\/--resume-last or --with-session/);
 });

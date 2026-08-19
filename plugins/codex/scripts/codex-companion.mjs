@@ -79,7 +79,7 @@ function printUsage() {
       "  node scripts/codex-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  node scripts/codex-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/codex-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
-      "  node scripts/codex-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
+      "  node scripts/codex-companion.mjs task [--background] [--write] [--with-session] [--sandbox <read-only|workspace-write|danger-full-access|inherit>] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
       "  node scripts/codex-companion.mjs transfer [--source <claude-jsonl>] [--json]",
       "  node scripts/codex-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/codex-companion.mjs result [job-id] [--json]",
@@ -240,6 +240,36 @@ async function handleSetup(argv) {
 
 function loadReviewWorkspacePolicy() {
   return loadPromptTemplate(ROOT_DIR, "review-workspace-policy").trim();
+}
+
+function loadTaskWorkspacePolicy() {
+  return loadPromptTemplate(ROOT_DIR, "task-workspace-policy").trim();
+}
+
+const SANDBOX_MODES = ["read-only", "workspace-write", "danger-full-access", "inherit"];
+
+/**
+ * `inherit` (and the write-capable default) resolve to `null`, which tells the
+ * app-server layer to send no sandbox override at all. The plugin should not
+ * quietly narrow what the user already configured for Codex; a rescue that can
+ * write but cannot reach the network fails at `npm ci` for no stated reason.
+ */
+function normalizeSandboxMode(value) {
+  if (value == null) {
+    return undefined;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (!SANDBOX_MODES.includes(normalized)) {
+    throw new Error(`Unsupported sandbox "${value}". Use one of: ${SANDBOX_MODES.join(", ")}.`);
+  }
+  return normalized === "inherit" ? null : normalized;
+}
+
+function resolveTaskSandbox({ sandbox, write }) {
+  if (sandbox !== undefined) {
+    return sandbox;
+  }
+  return write ? null : "read-only";
 }
 
 function buildAdversarialReviewPrompt(context, focusText) {
@@ -492,19 +522,47 @@ async function executeTaskRun(request) {
       throw new Error("No previous Codex task thread was found for this repository.");
     }
     resumeThreadId = latestThread.id;
+  } else if (request.withSession) {
+    // Hand over what Claude already knows instead of making Codex rediscover it.
+    // The plugin can already import a Claude transcript into a Codex thread
+    // (`/codex:transfer`); starting the task on that thread means the delegate
+    // inherits the investigation -- the failing command, what was ruled out,
+    // which files were already read -- rather than a one-line summary of it.
+    request.onProgress?.({
+      message: "Transferring the Claude session into a Codex thread.",
+      phase: "starting"
+    });
+    const sourcePath = resolveClaudeSessionPath(request.cwd, { source: request.sessionSource });
+    const imported = await importExternalAgentSession(workspaceRoot, { sourcePath });
+    resumeThreadId = imported.threadId;
+    request.onProgress?.({
+      message: `Claude session available in thread ${resumeThreadId}.`,
+      phase: "starting",
+      threadId: resumeThreadId
+    });
   }
 
   if (!request.prompt && !resumeThreadId) {
     throw new Error("Provide a prompt, a prompt file, piped stdin, or use --resume-last.");
   }
 
+  const sandbox = resolveTaskSandbox({ sandbox: request.sandbox, write: request.write });
+  // A fresh write-capable run gets the workspace contract that replaces the
+  // narrower sandbox: say what "in scope" means rather than fencing the tools.
+  // Continuations already carry it from their first turn, and re-sending it
+  // would bury the follow-up instruction. A `--with-session` run resumes an
+  // imported thread but is still a first turn, so it does get the contract.
+  const wantsTaskPolicy =
+    request.prompt && !request.resumeLast && sandbox !== "read-only" && !request.noWorkspacePolicy;
+  const prompt = wantsTaskPolicy ? `${request.prompt.trim()}\n\n${loadTaskWorkspacePolicy()}` : request.prompt;
+
   const result = await runAppServerTurn(workspaceRoot, {
     resumeThreadId,
-    prompt: request.prompt,
+    prompt,
     defaultPrompt: resumeThreadId ? DEFAULT_CONTINUE_PROMPT : "",
     model: request.model,
     effort: request.effort,
-    sandbox: request.write ? "workspace-write" : "read-only",
+    sandbox,
     onProgress: request.onProgress,
     persistThread: true,
     threadName: resumeThreadId ? null : buildPersistentTaskThreadName(request.prompt || DEFAULT_CONTINUE_PROMPT)
@@ -623,14 +681,30 @@ function buildTaskJob(workspaceRoot, taskMetadata, write) {
   });
 }
 
-function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId }) {
+function buildTaskRequest({
+  cwd,
+  model,
+  effort,
+  prompt,
+  write,
+  sandbox,
+  resumeLast,
+  withSession,
+  sessionSource,
+  noWorkspacePolicy,
+  jobId
+}) {
   return {
     cwd,
     model,
     effort,
     prompt,
     write,
+    sandbox,
     resumeLast,
+    withSession,
+    sessionSource,
+    noWorkspacePolicy,
     jobId
   };
 }
@@ -783,8 +857,20 @@ async function handleReview(argv) {
 
 async function handleTask(argv) {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ["model", "effort", "cwd", "prompt-file"],
-    booleanOptions: ["json", "write", "resume-last", "resume", "fresh", "background"],
+    valueOptions: ["model", "effort", "cwd", "prompt-file", "sandbox", "session-source"],
+    booleanOptions: [
+      "json",
+      "write",
+      "resume-last",
+      "resume",
+      "fresh",
+      "background",
+      "with-session",
+      // Internal: callers that already supply their own workspace contract (the
+      // stop-time review gate carries the review one) must not also receive the
+      // task contract, which tells the model to change things.
+      "no-workspace-policy"
+    ],
     aliasMap: {
       m: "model"
     }
@@ -794,12 +880,20 @@ async function handleTask(argv) {
   const workspaceRoot = resolveCommandWorkspace(options);
   const model = normalizeRequestedModel(options.model);
   const effort = normalizeReasoningEffort(options.effort);
+  const sandbox = normalizeSandboxMode(options.sandbox);
+  const noWorkspacePolicy = Boolean(options["no-workspace-policy"]);
   const prompt = readTaskPrompt(cwd, options, positionals);
 
   const resumeLast = Boolean(options["resume-last"] || options.resume);
   const fresh = Boolean(options.fresh);
   if (resumeLast && fresh) {
     throw new Error("Choose either --resume/--resume-last or --fresh.");
+  }
+  const withSession = Boolean(options["with-session"]);
+  if (resumeLast && withSession) {
+    throw new Error(
+      "Choose either --resume/--resume-last or --with-session. A resumed Codex thread already carries its own history."
+    );
   }
   const write = Boolean(options.write);
   const taskMetadata = buildTaskRunMetadata({
@@ -818,7 +912,11 @@ async function handleTask(argv) {
       effort,
       prompt,
       write,
+      sandbox,
       resumeLast,
+      withSession,
+      sessionSource: options["session-source"] ?? null,
+      noWorkspacePolicy,
       jobId: job.id
     });
     const { payload } = enqueueBackgroundTask(cwd, job, request);
@@ -836,7 +934,11 @@ async function handleTask(argv) {
         effort,
         prompt,
         write,
+        sandbox,
         resumeLast,
+        withSession,
+        sessionSource: options["session-source"] ?? null,
+        noWorkspacePolicy,
         jobId: job.id,
         onProgress: progress
       }),

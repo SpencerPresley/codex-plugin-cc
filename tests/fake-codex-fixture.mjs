@@ -350,6 +350,7 @@ rl.on("line", (line) => {
         if (requiresExperimental("persistExtendedHistory", message, state) || requiresExperimental("persistFullHistory", message, state)) {
           throw new Error("thread/resume.persistFullHistory requires experimentalApi capability");
         }
+        state.lastThreadResume = message.params;
         const thread = ensureThread(state, message.params.threadId);
         thread.updatedAt = now();
         saveState(state);
