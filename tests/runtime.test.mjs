@@ -10,7 +10,7 @@ import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
 import { cleanupTempDirs, initGitRepo, makeTempDir, run } from "./helpers.mjs";
 import { loadBrokerSession, saveBrokerSession } from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
 import { parseBrokerEndpoint } from "../plugins/codex/scripts/lib/broker-endpoint.mjs";
-import { resolveStateDir } from "../plugins/codex/scripts/lib/state.mjs";
+import { resolveStateDir, resolveStateDirName } from "../plugins/codex/scripts/lib/state.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PLUGIN_ROOT = path.join(ROOT, "plugins", "codex");
@@ -456,7 +456,7 @@ test("adversarial review asks Codex to inspect larger diffs itself", () => {
   assert.equal(result.status, 0, result.stderr);
   const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
   assert.match(state.lastTurnStart.prompt, /lightweight summary/i);
-  assert.match(state.lastTurnStart.prompt, /read-only git commands/i);
+  assert.match(state.lastTurnStart.prompt, /Collect the diff yourself/i);
   assert.doesNotMatch(state.lastTurnStart.prompt, /PROMPT_SELF_COLLECT_[ABC]/);
 });
 
@@ -741,7 +741,65 @@ test("write task output focuses on the Codex result without generic follow-up hi
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "Handled the requested task.\nTask prompt accepted.\n");
   const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
-  assert.equal(state.lastThreadStart.sandbox, "workspace-write");
+  // A write-capable rescue inherits the user's own Codex sandbox configuration:
+  // the plugin sends no override at all rather than narrowing it to
+  // workspace-write, which blocks the network the fix usually needs.
+  assert.equal(Object.prototype.hasOwnProperty.call(state.lastThreadStart, "sandbox"), false);
+  assert.equal(state.lastThreadStart.approvalPolicy, "never");
+  // The reach comes with a stated contract instead of a narrower cage.
+  assert.match(state.lastTurnStart.prompt, /<task_workspace_policy>/);
+  assert.match(state.lastTurnStart.prompt, /fix the failing test/);
+});
+
+test("task without --write still runs read-only and carries no workspace policy", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const result = run("node", [SCRIPT, "task", "investigate the failing test"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  assert.equal(state.lastThreadStart.sandbox, "read-only");
+  // Asking for a non-mutating run is an explicit choice; do not lecture it about
+  // a workspace it cannot write to anyway.
+  assert.equal(/<task_workspace_policy>/.test(state.lastTurnStart.prompt), false);
+});
+
+test("task --sandbox pins an explicit mode and rejects unknown ones", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const pinned = run("node", [SCRIPT, "task", "--sandbox", "danger-full-access", "reproduce the crash"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(pinned.status, 0, pinned.stderr);
+  const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  assert.equal(state.lastThreadStart.sandbox, "danger-full-access");
+  assert.match(state.lastTurnStart.prompt, /<task_workspace_policy>/);
+
+  const inherited = run("node", [SCRIPT, "task", "--sandbox", "inherit", "reproduce the crash"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(inherited.status, 0, inherited.stderr);
+  const inheritedState = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  assert.equal(Object.prototype.hasOwnProperty.call(inheritedState.lastThreadStart, "sandbox"), false);
+
+  const rejected = run("node", [SCRIPT, "task", "--sandbox", "wide-open", "reproduce the crash"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /Unsupported sandbox "wide-open"/);
+  assert.match(rejected.stderr, /read-only, workspace-write, danger-full-access, inherit/);
 });
 
 test("task --resume acts like --resume-last without leaking the flag into the prompt", () => {
@@ -916,6 +974,13 @@ test("task can finish after subagent work even if the parent turn/completed even
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "Handled the requested task.\nTask prompt accepted.\n");
+  // A run that ends through inferred completion (final answer seen, no
+  // outstanding collaboration) is a real completion. Recording it as "failed"
+  // made every successful multi-agent run look broken in /codex:status.
+  const stateDir = resolveStateDir(repo);
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  assert.equal(state.jobs[0].status, "completed");
+  assert.equal(state.jobs[0].phase, "done");
 });
 
 test("task using the shared broker still completes when Codex spawns subagents", () => {
@@ -1006,7 +1071,7 @@ test("task --background enqueues a detached worker and exposes per-job status", 
   run("git", ["add", "README.md"], { cwd: repo });
   run("git", ["commit", "-m", "init"], { cwd: repo });
 
-  const launched = run("node", [SCRIPT, "task", "--background", "--json", "investigate the failing test"], {
+  const launched = run("node", [SCRIPT, "task", "--background", "--write", "--json", "investigate the failing test"], {
     cwd: repo,
     env: buildEnv(binDir)
   });
@@ -1015,6 +1080,11 @@ test("task --background enqueues a detached worker and exposes per-job status", 
   const launchPayload = JSON.parse(launched.stdout);
   assert.equal(launchPayload.status, "queued");
   assert.match(launchPayload.jobId, /^task-/);
+  // The job log is written line-by-line while the run is in flight, so the
+  // launch has to say where it is; otherwise the only way to follow a
+  // background run is to poll status.
+  assert.equal(typeof launchPayload.logFile, "string");
+  assert.equal(fs.existsSync(launchPayload.logFile), true);
 
   const waitedStatus = run(
     "node",
@@ -1044,9 +1114,14 @@ test("task --background enqueues a detached worker and exposes per-job status", 
   assert.equal(resultPayload.job.id, launchPayload.jobId);
   assert.equal(resultPayload.job.status, "completed");
   assert.match(resultPayload.storedJob.rendered, /Handled the requested task/);
+  // The detached worker rebuilds the run from the stored request, so the sandbox
+  // decision and the workspace contract have to survive that round trip.
+  const fakeState = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  assert.equal(Object.prototype.hasOwnProperty.call(fakeState.lastThreadStart, "sandbox"), false);
+  assert.match(fakeState.lastTurnStart.prompt, /<task_workspace_policy>/);
 });
 
-test("review rejects focus text because it is native-review only", () => {
+test("review rejects focus text so its results stay comparable across runs", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
   installFakeCodex(binDir);
@@ -1062,7 +1137,10 @@ test("review rejects focus text because it is native-review only", () => {
   });
 
   assert.equal(result.status > 0, true);
-  assert.match(result.stderr, /does not support custom focus text/i);
+  // The plugin now sends a custom instruction block for every review target, so
+  // this is a deliberate split between a steerable and an unsteered command --
+  // the error should say that rather than blaming a protocol limit.
+  assert.match(result.stderr, /deliberately takes no focus text/i);
   assert.match(result.stderr, /\/codex:adversarial-review focus on auth/i);
 });
 
@@ -1878,7 +1956,7 @@ test("cancel sends turn interrupt to the shared app-server before killing a brok
   assert.equal(cleanup.status, 0, cleanup.stderr);
 });
 
-test("session end fully cleans up jobs for the ending session", async (t) => {
+test("session end interrupts running jobs but keeps finished results for the ending session", async (t) => {
   const repo = makeTempDir();
   initGitRepo(repo);
   fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
@@ -1978,11 +2056,18 @@ test("session end fully cleans up jobs for the ending session", async (t) => {
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(fs.existsSync(otherSessionLog), true);
-  assert.equal(fs.existsSync(otherJobFile), true);
+  // Nothing is deleted: the ending session's finished result and its streamed
+  // log survive, and so does every other session's.
   assert.deepEqual(
     fs.readdirSync(path.dirname(otherJobFile)).sort(),
-    [path.basename(otherJobFile), path.basename(otherSessionLog)].sort()
+    [
+      path.basename(completedJobFile),
+      path.basename(completedLog),
+      path.basename(otherJobFile),
+      path.basename(otherSessionLog),
+      path.basename(runningJobFile),
+      path.basename(runningLog)
+    ].sort()
   );
 
   await waitFor(() => {
@@ -1995,8 +2080,26 @@ test("session end fully cleans up jobs for the ending session", async (t) => {
   });
 
   const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
-  assert.deepEqual(state.jobs.map((job) => job.id), ["review-other"]);
-  const otherJob = state.jobs[0];
+  assert.deepEqual(
+    state.jobs.map((job) => job.id).sort(),
+    ["review-completed", "review-other", "review-running"]
+  );
+
+  const byId = new Map(state.jobs.map((job) => [job.id, job]));
+  // The job that was still running is settled, not erased.
+  assert.equal(byId.get("review-running").status, "interrupted");
+  assert.equal(byId.get("review-running").phase, "interrupted");
+  assert.equal(byId.get("review-running").pid, null);
+  assert.match(byId.get("review-running").errorMessage, /Claude session ended/);
+  assert.equal(
+    JSON.parse(fs.readFileSync(runningJobFile, "utf8")).status,
+    "interrupted"
+  );
+  // A finished job from the ending session keeps its status and its result file.
+  assert.equal(byId.get("review-completed").status, "completed");
+  assert.equal(byId.get("review-completed").logFile, completedLog);
+
+  const otherJob = byId.get("review-other");
   assert.equal(otherJob.logFile, otherSessionLog);
 });
 
@@ -2333,4 +2436,593 @@ test("setup and status honor --cwd when reading shared session runtime", () => {
   const payload = JSON.parse(setup.stdout);
   assert.equal(payload.sessionRuntime.mode, "shared");
   assert.equal(payload.sessionRuntime.endpoint, "unix:/tmp/fake-broker.sock");
+});
+
+test("transfer derives the transcript from the Claude session id when the hook never recorded it", () => {
+  const home = makeTempDir();
+  const repo = path.join(home, "repo");
+  const binDir = makeTempDir();
+  const sessionId = "sess-derived-transfer";
+  fs.mkdirSync(repo, { recursive: true });
+  const projectDir = path.join(home, ".claude", "projects", "-repo");
+  const sourcePath = path.join(projectDir, `${sessionId}.jsonl`);
+  fs.mkdirSync(projectDir, { recursive: true });
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  fs.writeFileSync(
+    sourcePath,
+    `${JSON.stringify({ type: "user", cwd: repo, message: { role: "user", content: "Derived request" } })}\n`,
+    "utf8"
+  );
+
+  // No CODEX_COMPANION_TRANSCRIPT_PATH: this is the state you are in when the
+  // plugin was enabled mid-session or the SessionStart hook did not run.
+  const result = run("node", [SCRIPT, "transfer", "--json"], {
+    cwd: repo,
+    env: {
+      ...buildEnv(binDir),
+      HOME: home,
+      CODEX_HOME: path.join(home, ".codex"),
+      CLAUDE_CODE_SESSION_ID: sessionId
+    }
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.sourcePath, fs.realpathSync(sourcePath));
+  assert.equal(payload.sessionId, sessionId);
+});
+
+test("transfer names the expected transcript path when it cannot be derived", () => {
+  const home = makeTempDir();
+  const repo = path.join(home, "repo");
+  const binDir = makeTempDir();
+  fs.mkdirSync(repo, { recursive: true });
+  fs.mkdirSync(path.join(home, ".claude", "projects"), { recursive: true });
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const result = run("node", [SCRIPT, "transfer"], {
+    cwd: repo,
+    env: {
+      ...buildEnv(binDir),
+      HOME: home,
+      CODEX_HOME: path.join(home, ".codex"),
+      CLAUDE_CODE_SESSION_ID: "sess-missing-file"
+    }
+  });
+
+  assert.notEqual(result.status, 0);
+  // The error has to name a concrete path; "retry with --source" alone leaves
+  // the user with nothing to type.
+  assert.match(result.stderr, /Expected it at .*sess-missing-file\.jsonl/);
+  assert.match(result.stderr, /--source/);
+});
+
+test("job lookup points at another plugin install's store instead of reporting nothing", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  const pluginDataRoot = makeTempDir();
+  const activeDataDir = path.join(pluginDataRoot, "codex-active");
+  const siblingDataDir = path.join(pluginDataRoot, "codex-inline");
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const env = { ...buildEnv(binDir), CLAUDE_PLUGIN_DATA: activeDataDir };
+  const dirName = resolveStateDirName(repo);
+  const siblingJobsDir = path.join(siblingDataDir, "state", dirName, "jobs");
+  fs.mkdirSync(siblingJobsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(siblingJobsDir, "review-elsewhere.json"),
+    JSON.stringify({ id: "review-elsewhere", status: "completed" }),
+    "utf8"
+  );
+
+  const result = run("node", [SCRIPT, "status", "review-elsewhere"], { cwd: repo, env });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /No job found for "review-elsewhere"/);
+  assert.match(result.stderr, /another Codex plugin store/);
+  assert.match(result.stderr, new RegExp(siblingDataDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("stop hook gives the gate reviewer full reach and the repository contract", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "adversarial-clean");
+  initGitRepo(repo);
+
+  const setup = run("node", [SCRIPT, "setup", "--enable-review-gate", "--json"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(setup.status, 0, setup.stderr);
+
+  const allowed = run("node", [STOP_HOOK], {
+    cwd: repo,
+    env: buildEnv(binDir),
+    input: JSON.stringify({
+      cwd: repo,
+      session_id: "sess-gate-reach",
+      last_assistant_message: "I refactored the retry logic."
+    })
+  });
+
+  assert.equal(allowed.status, 0, allowed.stderr);
+  assert.equal(allowed.stdout.trim(), "");
+  const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  // The gate is a review: it must be able to run the tests it is asked to reason
+  // about, under the same repository-preserving contract as /codex:review.
+  assert.equal(state.lastThreadStart.sandbox, "danger-full-access");
+  assert.match(state.lastTurnStart.prompt, /<review_workspace_policy>/);
+  assert.match(state.lastTurnStart.prompt, /incidental/i);
+  // It must not also pick up the task contract, which authorizes changes: the
+  // gate would then be holding two contradictory instructions about whether it
+  // may modify the repository.
+  assert.equal(/<task_workspace_policy>/.test(state.lastTurnStart.prompt), false);
+});
+
+test("stop hook allows the stop when the gate itself fails instead of trapping the session", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "stop-gate-garbage");
+  initGitRepo(repo);
+
+  const setup = run("node", [SCRIPT, "setup", "--enable-review-gate", "--json"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(setup.status, 0, setup.stderr);
+
+  const result = run("node", [STOP_HOOK], {
+    cwd: repo,
+    env: buildEnv(binDir),
+    input: JSON.stringify({
+      cwd: repo,
+      session_id: "sess-gate-broken",
+      last_assistant_message: "I refactored the retry logic."
+    })
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  // No decision payload at all: a reviewer that could not answer must not be
+  // able to hold the session hostage.
+  assert.equal(result.stdout.trim(), "");
+  assert.match(result.stderr, /could not evaluate this turn/);
+  assert.match(result.stderr, /\/codex:review --wait/);
+});
+
+test("background launch prints the live log path so the run can be followed", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const launched = run("node", [SCRIPT, "task", "--background", "investigate the flaky test"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.equal(launched.status, 0, launched.stderr);
+  assert.match(launched.stdout, /started in the background as task-/);
+  // Progress is appended to this file as it happens, so it is the only way to
+  // watch a background run without polling status.
+  assert.match(launched.stdout, /Live log: .+\.log/);
+});
+
+test("an interrupted adversarial review reports no verdict instead of its last interim message", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "review-interrupted");
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "app.js"), "export const noop = () => {};\n");
+
+  const result = run("node", [SCRIPT, "adversarial-review", "--json"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  const payload = JSON.parse(result.stdout);
+  // The interim message parses as a complete review object and says "approve".
+  // It must not be promoted to a verdict just because it was the last thing said.
+  assert.equal(payload.result, null);
+  assert.equal(payload.interrupted, true);
+  assert.match(payload.parseError, /did not finish \(turn status: failed\)/);
+
+  const rendered = run("node", [SCRIPT, "adversarial-review"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.match(rendered.stdout, /did not finish, so it has no verdict/);
+  assert.match(rendered.stdout, /Last interim message \(not a verdict\)/);
+  assert.equal(/^Verdict: approve/m.test(rendered.stdout), false);
+  // The interim assessments are kept rather than discarded: the drift across
+  // them is the only visibility into a long run.
+  assert.equal(payload.assessments.length, 1);
+  assert.match(payload.assessments[0].text, /Still tracing the retry path/);
+  assert.equal(payload.assessments[0].phase, "analysis");
+  assert.match(payload.assessments[0].at, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("a completed adversarial review keeps its verdict and records the assessment timeline", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "app.js"), "export const noop = () => {};\n");
+
+  const result = run("node", [SCRIPT, "adversarial-review", "--json"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.interrupted, false);
+  assert.equal(typeof payload.result.verdict, "string");
+  assert.equal(payload.assessments.length >= 1, true);
+  assert.equal(payload.assessments.at(-1).text, payload.rawOutput);
+});
+
+test("subagent labels survive notifications that arrive before the turn is acknowledged", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "with-subagent-early-thread-started");
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+
+  const result = run("node", [SCRIPT, "task", "challenge the current design"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const stateDir = resolveStateDir(repo);
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
+  // `thread/started` for a subagent legitimately arrives before the parent turn
+  // is acknowledged, so it gets buffered. If the replay drops it, every later
+  // line for that subagent degrades to a raw thread id.
+  assert.match(log, /Subagent design-challenger:/);
+  assert.equal(/Subagent thr_\d+/.test(log), false);
+});
+
+test("task --with-session hands Codex the Claude transcript instead of a bare prompt", () => {
+  const home = makeTempDir();
+  const repo = path.join(home, "repo");
+  const binDir = makeTempDir();
+  const sessionId = "sess-handoff";
+  fs.mkdirSync(repo, { recursive: true });
+  const projectDir = path.join(home, ".claude", "projects", "-repo");
+  fs.mkdirSync(projectDir, { recursive: true });
+  const sourcePath = path.join(projectDir, `${sessionId}.jsonl`);
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  fs.writeFileSync(
+    sourcePath,
+    [
+      { type: "user", cwd: repo, message: { role: "user", content: "The integration test is flaky" } },
+      { type: "assistant", cwd: repo, message: { role: "assistant", content: "Ruled out the retry wrapper" } }
+    ]
+      .map((entry) => JSON.stringify(entry))
+      .join("\n") + "\n",
+    "utf8"
+  );
+
+  const env = {
+    ...buildEnv(binDir),
+    HOME: home,
+    CODEX_HOME: path.join(home, ".codex"),
+    CODEX_COMPANION_TRANSCRIPT_PATH: sourcePath
+  };
+
+  const result = run("node", [SCRIPT, "task", "--write", "--with-session", "fix the flaky test"], {
+    cwd: repo,
+    env
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const fakeState = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  // The task runs on the thread the transcript was imported into, so Codex
+  // starts from what Claude already established.
+  assert.equal(fakeState.lastExternalAgentImport.sourcePath, fs.realpathSync(sourcePath));
+  assert.equal(fakeState.lastThreadResume.threadId, "thr_1");
+  assert.equal(fakeState.lastTurnStart.threadId, "thr_1");
+  assert.deepEqual(
+    fakeState.threads[0].visibleMessages.map((message) => message.text),
+    ["The integration test is flaky", "Ruled out the retry wrapper"]
+  );
+  // It is still a first turn, so the workspace contract goes with it.
+  assert.match(fakeState.lastTurnStart.prompt, /fix the flaky test/);
+  assert.match(fakeState.lastTurnStart.prompt, /<task_workspace_policy>/);
+});
+
+test("task rejects combining --with-session with a resumed Codex thread", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const result = run("node", [SCRIPT, "task", "--with-session", "--resume-last", "keep going"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Choose either --resume\/--resume-last or --with-session/);
+});
+
+test("result for a job that is still running says so instead of claiming it does not exist", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const stateDir = resolveStateDir(repo);
+  fs.mkdirSync(path.join(stateDir, "jobs"), { recursive: true });
+  fs.writeFileSync(
+    path.join(stateDir, "state.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        config: { stopReviewGate: false },
+        jobs: [
+          {
+            id: "review-inflight",
+            status: "running",
+            title: "Codex Review",
+            createdAt: "2026-08-19T00:00:00.000Z",
+            updatedAt: "2026-08-19T00:01:00.000Z"
+          }
+        ]
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+
+  const result = run("node", [SCRIPT, "result", "review-inflight"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.notEqual(result.status, 0);
+  // Reporting "no job found" for a job that is plainly running is what makes a
+  // run feel lost; the branch that says otherwise was unreachable.
+  assert.match(result.stderr, /is still running/i);
+  assert.equal(/No finished job found/.test(result.stderr), false);
+});
+
+test("an unfinished native review does not report a summary that says it completed", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "native-review-interrupted");
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "app.js"), "export const noop = () => {};\n");
+
+  const result = run("node", [SCRIPT, "review", "--json"], { cwd: repo, env: buildEnv(binDir) });
+  const payload = JSON.parse(result.stdout);
+
+  assert.equal(payload.interrupted, true);
+  // /codex:status shows the summary, so a status-blind summary is the first
+  // thing you would read -- and it used to fall back to the word "completed".
+  const stateDir = resolveStateDir(repo);
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  assert.match(state.jobs[0].summary, /did not finish/);
+  assert.equal(/completed\./.test(state.jobs[0].summary), false);
+});
+
+test("the retained assessment timeline is bounded and says what it dropped", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "review-chatty");
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "app.js"), "export const noop = () => {};\n");
+
+  const result = run("node", [SCRIPT, "adversarial-review", "--json"], { cwd: repo, env: buildEnv(binDir) });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+
+  // 25 messages in, 20 retained: the payload is read whole by /codex:result, so
+  // it cannot grow with the length of the run. The full text stays in the log.
+  assert.equal(payload.assessments.length, 20);
+  assert.equal(payload.assessments[0].omittedBefore, 5);
+  assert.equal(payload.assessments[0].truncated, true);
+  assert.equal(payload.assessments[0].text.length <= 2004, true);
+  // The final message always survives the window and stays the verdict.
+  assert.equal(payload.result.verdict, "needs-attention");
+
+  const rendered = run("node", [SCRIPT, "adversarial-review"], { cwd: repo, env: buildEnv(binDir) });
+  assert.match(rendered.stdout, /Assessment moved: \.\.\. \(5 earlier\) -> approve/);
+  assert.match(rendered.stdout, /-> needs-attention \(final\)/);
+});
+
+test("--write and --sandbox cannot contradict each other silently", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const contradiction = run("node", [SCRIPT, "task", "--write", "--sandbox", "read-only", "fix it"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.notEqual(contradiction.status, 0);
+  assert.match(contradiction.stderr, /`--write` cannot be combined with `--sandbox read-only`/);
+
+  // A sandbox that permits writes makes the run write-capable, so the stored
+  // job record must not claim otherwise.
+  const implied = run("node", [SCRIPT, "task", "--sandbox", "workspace-write", "--json", "fix it"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(implied.status, 0, implied.stderr);
+  const stateDir = resolveStateDir(repo);
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  assert.equal(state.jobs[0].write, true);
+});
+
+test("--no-workspace-policy is refused from the command line", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const result = run("node", [SCRIPT, "task", "--write", "--no-workspace-policy", "fix it"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.notEqual(result.status, 0);
+  // The contract is what justifies the wider sandbox; it must not be reachable
+  // as a plain flag.
+  assert.match(result.stderr, /internal to the stop-time review gate/);
+});
+
+test("--with-session resolves the transcript before detaching a background job", () => {
+  const home = makeTempDir();
+  const repo = path.join(home, "repo");
+  const binDir = makeTempDir();
+  fs.mkdirSync(repo, { recursive: true });
+  fs.mkdirSync(path.join(home, ".claude", "projects"), { recursive: true });
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const result = run("node", [SCRIPT, "task", "--background", "--with-session", "fix it"], {
+    cwd: repo,
+    env: { ...buildEnv(binDir), HOME: home, CODEX_HOME: path.join(home, ".codex"), CLAUDE_CODE_SESSION_ID: "sess-none" }
+  });
+
+  // Failing at launch beats failing minutes later inside a detached worker,
+  // where the only trace is a log nobody is watching.
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Could not identify the current Claude transcript/);
+});
+
+test("status omits a log path once the job cap has deleted the file", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const stateDir = resolveStateDir(repo);
+  fs.mkdirSync(path.join(stateDir, "jobs"), { recursive: true });
+  const livingLog = path.join(stateDir, "jobs", "review-live.log");
+  fs.writeFileSync(livingLog, "progress\n", "utf8");
+  fs.writeFileSync(
+    path.join(stateDir, "state.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        config: { stopReviewGate: false },
+        jobs: [
+          {
+            id: "review-live",
+            status: "completed",
+            title: "Codex Review",
+            logFile: livingLog,
+            createdAt: "2026-08-19T00:00:00.000Z",
+            updatedAt: "2026-08-19T00:02:00.000Z"
+          },
+          {
+            id: "review-pruned",
+            status: "completed",
+            title: "Codex Review",
+            logFile: path.join(stateDir, "jobs", "review-pruned.log"),
+            createdAt: "2026-08-19T00:00:00.000Z",
+            updatedAt: "2026-08-19T00:01:00.000Z"
+          }
+        ]
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+
+  const live = run("node", [SCRIPT, "status", "review-live"], { cwd: repo, env: buildEnv(binDir) });
+  const pruned = run("node", [SCRIPT, "status", "review-pruned"], { cwd: repo, env: buildEnv(binDir) });
+
+  assert.match(live.stdout, /Log: .*review-live\.log/);
+  assert.equal(/Log:/.test(pruned.stdout), false);
+});
+
+test("the stop gate's own run is not recorded as write-capable work", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "adversarial-clean");
+  initGitRepo(repo);
+
+  const setup = run("node", [SCRIPT, "setup", "--enable-review-gate", "--json"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(setup.status, 0, setup.stderr);
+
+  const gate = run("node", [STOP_HOOK], {
+    cwd: repo,
+    env: buildEnv(binDir),
+    input: JSON.stringify({
+      cwd: repo,
+      session_id: "sess-gate-label",
+      last_assistant_message: "I refactored the retry logic."
+    })
+  });
+  assert.equal(gate.status, 0, gate.stderr);
+
+  const stateDir = resolveStateDir(repo);
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  const gateJob = state.jobs.find((job) => job.title?.includes("Stop Gate"));
+  // The gate takes a wide sandbox in order to *inspect*. `write` drives
+  // "review the changes" follow-ups, so labelling the gate write-capable would
+  // suggest reviewing edits it is forbidden to make.
+  assert.equal(gateJob.write, false);
+
+  const status = run("node", [SCRIPT, "status", gateJob.id], { cwd: repo, env: buildEnv(binDir) });
+  assert.equal(/Review changes/.test(status.stdout), false);
+});
+
+test("--session-source alone does not turn a plain task into a session handoff", () => {
+  const home = makeTempDir();
+  const repo = path.join(home, "repo");
+  const binDir = makeTempDir();
+  fs.mkdirSync(repo, { recursive: true });
+  const projectDir = path.join(home, ".claude", "projects", "-repo");
+  fs.mkdirSync(projectDir, { recursive: true });
+  const sourcePath = path.join(projectDir, "sess-unused.jsonl");
+  fs.writeFileSync(
+    sourcePath,
+    `${JSON.stringify({ type: "user", cwd: repo, message: { role: "user", content: "hi" } })}\n`,
+    "utf8"
+  );
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const result = run("node", [SCRIPT, "task", "--session-source", sourcePath, "investigate"], {
+    cwd: repo,
+    env: { ...buildEnv(binDir), HOME: home, CODEX_HOME: path.join(home, ".codex") }
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const fakeState = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  // Importing a transcript is what --with-session asks for. Doing it because a
+  // path happened to be present would silently change what the run is.
+  assert.equal(fakeState.lastExternalAgentImport, undefined);
 });

@@ -12,7 +12,7 @@ Raw slash-command arguments:
 Core constraint:
 - This command is review-only.
 - Do not fix issues, apply patches, or suggest that you are about to make changes.
-- Your only job is to run the review and return Codex's output verbatim to the user.
+- Your job is to run the review and return Codex's output verbatim to the user. You may add your own assessment after it, under the rules below.
 
 Execution mode rules:
 - If the raw arguments include `--wait`, do not ask. Run the review in the foreground.
@@ -44,8 +44,16 @@ Foreground flow:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" review "$ARGUMENTS"
 ```
 - Return the command stdout verbatim, exactly as-is.
-- Do not paraphrase, summarize, or add commentary before or after it.
+- Do not paraphrase, summarize, or rewrite it, and do not put anything before it.
 - Do not fix any issues mentioned in the review output.
+
+Assessment (optional, after the verbatim output):
+- You may add one section titled `## Claude's assessment` *after* the verbatim block, never before it and never interleaved.
+- Use it only for something checkable: a finding you can show is wrong, a file:line the reviewer misread, a missing consequence, or a finding you would rank differently and why.
+- Cite evidence the same way you would expect from a reviewer: the path and line, or the command you ran and what it printed.
+- Codex and Claude are different models with different blind spots; a second opinion is the point of running the review. Agreement adds nothing on its own, so write the section only when you have something concrete to add.
+- Still do not edit anything. Ask which findings, if any, the user wants fixed.
+
 
 Background flow:
 - Launch the review with `Bash` in the background:

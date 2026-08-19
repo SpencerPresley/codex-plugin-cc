@@ -11,6 +11,8 @@ Challenge whether that specific work and its design choices should ship.
 {{CLAUDE_RESPONSE_BLOCK}}
 </task>
 
+{{REVIEW_WORKSPACE_POLICY}}
+
 <compact_output_contract>
 Return a compact final answer.
 Your first line must be exactly one of:

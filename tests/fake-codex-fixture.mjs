@@ -241,6 +241,9 @@ function taskPayload(prompt, resume) {
     if (BEHAVIOR === "adversarial-clean") {
       return "ALLOW: No blocking issues found in the previous turn.";
     }
+    if (BEHAVIOR === "stop-gate-garbage") {
+      return "I could not finish the review because the toolchain fell over.";
+    }
     return "BLOCK: Missing empty-state guard in src/app.js:4-6.";
   }
 
@@ -350,6 +353,7 @@ rl.on("line", (line) => {
         if (requiresExperimental("persistExtendedHistory", message, state) || requiresExperimental("persistFullHistory", message, state)) {
           throw new Error("thread/resume.persistFullHistory requires experimentalApi capability");
         }
+        state.lastThreadResume = message.params;
         const thread = ensureThread(state, message.params.threadId);
         thread.updatedAt = now();
         saveState(state);
@@ -413,6 +417,17 @@ rl.on("line", (line) => {
       case "review/start": {
         state.lastReviewStart = message.params;
         saveState(state);
+        if (BEHAVIOR === "native-review-interrupted") {
+          const thread0 = ensureThread(state, message.params.threadId);
+          const turn0 = nextTurnId(state);
+          send({ id: message.id, result: { turn: buildTurn(turn0), reviewThreadId: thread0.id } });
+          send({
+            method: "item/started",
+            params: { threadId: thread0.id, turnId: turn0, item: { type: "enteredReviewMode", id: turn0, review: "current changes" } }
+          });
+          send({ method: "turn/completed", params: { threadId: thread0.id, turn: buildTurn(turn0, "failed") } });
+          break;
+        }
         const thread = ensureThread(state, message.params.threadId);
         let reviewThread = thread;
         if (message.params.delivery === "detached") {
@@ -460,6 +475,21 @@ rl.on("line", (line) => {
 	          prompt
 	        };
 	        saveState(state);
+	        if (BEHAVIOR === "with-subagent-early-thread-started") {
+	          const earlyThread = nextThread(state, thread.cwd, true);
+	          const earlyRecord = ensureThread(state, earlyThread.id);
+	          earlyRecord.name = "design-challenger";
+	          saveState(state);
+	          state.pendingEarlySubThreadId = earlyThread.id;
+	          saveState(state);
+	          send({
+	            method: "thread/started",
+	            params: {
+	              thread: { ...buildThread(earlyRecord), name: "design-challenger", agentNickname: "design-challenger" }
+	            }
+	          });
+	        }
+
 	        send({ id: message.id, result: { turn: buildTurn(turnId) } });
 
         const payload = message.params.outputSchema && message.params.outputSchema.properties && message.params.outputSchema.properties.verdict
@@ -469,15 +499,21 @@ rl.on("line", (line) => {
         if (
           BEHAVIOR === "with-subagent" ||
           BEHAVIOR === "with-late-subagent-message" ||
-          BEHAVIOR === "with-subagent-no-main-turn-completed"
+          BEHAVIOR === "with-subagent-no-main-turn-completed" ||
+          BEHAVIOR === "with-subagent-early-thread-started"
         ) {
-          const subThread = nextThread(state, thread.cwd, true);
+          const earlyAnnounced = BEHAVIOR === "with-subagent-early-thread-started";
+          const subThread = earlyAnnounced
+            ? { id: state.pendingEarlySubThreadId }
+            : nextThread(state, thread.cwd, true);
           const subThreadRecord = ensureThread(state, subThread.id);
           subThreadRecord.name = "design-challenger";
           saveState(state);
           const subTurnId = nextTurnId(state);
 
-          send({ method: "thread/started", params: { thread: { ...buildThread(subThreadRecord), name: "design-challenger", agentNickname: "design-challenger" } } });
+          if (!earlyAnnounced) {
+            send({ method: "thread/started", params: { thread: { ...buildThread(subThreadRecord), name: "design-challenger", agentNickname: "design-challenger" } } });
+          }
           send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
           send({
             method: "item/started",
@@ -592,6 +628,59 @@ rl.on("line", (line) => {
             completed: { type: "agentMessage", id: "msg_" + turnId, text: payload, phase: "final_answer" }
           }
         ];
+
+	        if (BEHAVIOR === "review-chatty") {
+	          send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
+	          for (let i = 0; i < 25; i += 1) {
+	            send({
+	              method: "item/completed",
+	              params: {
+	                threadId: thread.id,
+	                turnId,
+	                item: {
+	                  type: "agentMessage",
+	                  id: "msg_" + turnId + "_" + i,
+	                  text: JSON.stringify({
+	                    verdict: i < 24 ? "approve" : "needs-attention",
+	                    summary: "step " + i + " " + "x".repeat(3000),
+	                    findings: [],
+	                    next_steps: []
+	                  }),
+	                  phase: i === 24 ? "final_answer" : "analysis"
+	                }
+	              }
+	            });
+	          }
+	          send({ method: "turn/completed", params: { threadId: thread.id, turn: buildTurn(turnId, "completed") } });
+	          break;
+	        }
+
+	        if (BEHAVIOR === "review-interrupted") {
+	          // The output schema forces a verdict onto every assistant message, so
+	          // a mid-run status update is itself a schema-valid review object.
+	          // Emit one, then end the turn without completing it.
+	          send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
+	          send({
+	            method: "item/completed",
+	            params: {
+	              threadId: thread.id,
+	              turnId,
+	              item: {
+	                type: "agentMessage",
+	                id: "msg_progress_" + turnId,
+	                text: JSON.stringify({
+	                  verdict: "approve",
+	                  summary: "Still tracing the retry path; no conclusion yet.",
+	                  findings: [],
+	                  next_steps: []
+	                }),
+	                phase: "analysis"
+	              }
+	            }
+	          });
+	          send({ method: "turn/completed", params: { threadId: thread.id, turn: buildTurn(turnId, "failed") } });
+	          break;
+	        }
 
 	        if (BEHAVIOR === "interruptible-slow-task") {
 	          send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });

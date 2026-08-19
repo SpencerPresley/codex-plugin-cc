@@ -1,3 +1,5 @@
+import fs from "node:fs";
+
 function severityRank(severity) {
   switch (severity) {
     case "critical":
@@ -142,7 +144,7 @@ function pushJobDetails(lines, job, options = {}) {
   if (resumeCommand) {
     lines.push(`  Resume in Codex: ${resumeCommand}`);
   }
-  if (job.logFile && options.showLog) {
+  if (job.logFile && options.showLog && fs.existsSync(job.logFile)) {
     lines.push(`  Log: ${job.logFile}`);
   }
   if ((job.status === "queued" || job.status === "running") && options.showCancelHint) {
@@ -161,6 +163,51 @@ function pushJobDetails(lines, job, options = {}) {
       lines.push(`    ${line}`);
     }
   }
+}
+
+/**
+ * How the reviewer's assessment moved while it worked.
+ *
+ * The output schema puts a verdict on every message, so a long run leaves a
+ * trail of interim verdicts. Showing that trail is the point of retaining them:
+ * a review that went approve -> needs-attention tells you something a single
+ * final verdict does not. Only rendered when it actually moved, or when the run
+ * was cut short and the interim state is all there is.
+ */
+function readAssessmentVerdict(entry) {
+  // Recorded at capture time, before any truncation; parsing is only a fallback
+  // for payloads written by an older version.
+  if (typeof entry?.verdict === "string" && entry.verdict.trim()) {
+    return entry.verdict.trim();
+  }
+  const text = String(entry?.text ?? "").trim();
+  if (!text.startsWith("{")) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return typeof parsed?.verdict === "string" && parsed.verdict.trim() ? parsed.verdict.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function formatAssessmentTimeline(assessments, options = {}) {
+  if (!Array.isArray(assessments) || assessments.length < 2) {
+    return null;
+  }
+  const verdicts = assessments.map(readAssessmentVerdict).filter(Boolean);
+  if (verdicts.length < 2) {
+    return null;
+  }
+  const moved = verdicts.some((verdict) => verdict !== verdicts[0]);
+  if (!moved && !options.always) {
+    return null;
+  }
+  const omitted = assessments.find((entry) => entry.omittedBefore)?.omittedBefore ?? 0;
+  const trail = verdicts.join(" -> ");
+  const suffix = options.final === false ? "" : " (final)";
+  return `Assessment moved: ${omitted > 0 ? `... (${omitted} earlier) -> ` : ""}${trail}${suffix}`;
 }
 
 function appendReasoningSection(lines, reasoningSummary) {
@@ -213,13 +260,27 @@ export function renderReviewResult(parsedResult, meta) {
     const lines = [
       `# Codex ${meta.reviewLabel}`,
       "",
-      "Codex did not return valid structured JSON.",
+      parsedResult.interrupted
+        ? "This review did not finish, so it has no verdict."
+        : "Codex did not return valid structured JSON.",
       "",
-      `- Parse error: ${parsedResult.parseError}`
+      `- ${parsedResult.interrupted ? "Reason" : "Parse error"}: ${parsedResult.parseError}`
     ];
 
+    const interruptedTrail = formatAssessmentTimeline(meta.assessments, { always: true, final: false });
+    if (interruptedTrail) {
+      lines.push("", interruptedTrail);
+    }
+
     if (parsedResult.rawOutput) {
-      lines.push("", "Raw final message:", "", "```text", parsedResult.rawOutput, "```");
+      lines.push(
+        "",
+        parsedResult.interrupted ? "Last interim message (not a verdict):" : "Raw final message:",
+        "",
+        "```text",
+        parsedResult.rawOutput,
+        "```"
+      );
     }
 
     appendReasoningSection(lines, meta.reasoningSummary ?? parsedResult.reasoningSummary);
@@ -253,11 +314,15 @@ export function renderReviewResult(parsedResult, meta) {
     `# Codex ${meta.reviewLabel}`,
     "",
     `Target: ${meta.targetLabel}`,
-    `Verdict: ${data.verdict}`,
-    "",
-    data.summary,
-    ""
+    `Verdict: ${data.verdict}`
   ];
+
+  const timeline = formatAssessmentTimeline(meta.assessments);
+  if (timeline) {
+    lines.push(timeline);
+  }
+
+  lines.push("", data.summary, "");
 
   if (findings.length === 0) {
     lines.push("No material findings.");
@@ -295,7 +360,14 @@ export function renderNativeReviewResult(result, meta) {
     ""
   ];
 
-  if (stdout) {
+  const timeline = formatAssessmentTimeline(meta.assessments, { always: result.status !== 0, final: result.status === 0 });
+  if (timeline) {
+    lines.push(timeline, "");
+  }
+
+  if (stdout && result.status !== 0) {
+    lines.push("This review did not finish, so the text below is not a final result.", "", stdout);
+  } else if (stdout) {
     lines.push(stdout);
   } else if (result.status === 0) {
     lines.push("Codex review completed without any stdout output.");
@@ -348,7 +420,7 @@ export function renderStatusReport(report) {
     lines.push("Latest finished:");
     pushJobDetails(lines, report.latestFinished, {
       showDuration: true,
-      showLog: report.latestFinished.status === "failed"
+      showLog: true
     });
     lines.push("");
   }
@@ -358,7 +430,7 @@ export function renderStatusReport(report) {
     for (const job of report.recent) {
       pushJobDetails(lines, job, {
         showDuration: true,
-        showLog: job.status === "failed"
+        showLog: true
       });
     }
     lines.push("");

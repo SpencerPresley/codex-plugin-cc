@@ -24,7 +24,7 @@ import {
 import { resolveClaudeSessionPath } from "./lib/claude-session-transfer.mjs";
 import { readStdinIfPiped } from "./lib/fs.mjs";
 import { collectReviewContext, ensureGitRepository, resolveReviewTarget } from "./lib/git.mjs";
-import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
+import { binaryAvailable, INTERNAL_CALLER_ENV, terminateProcessTree } from "./lib/process.mjs";
 import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
 import {
   generateJobId,
@@ -79,7 +79,7 @@ function printUsage() {
       "  node scripts/codex-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
       "  node scripts/codex-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
       "  node scripts/codex-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
-      "  node scripts/codex-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
+      "  node scripts/codex-companion.mjs task [--background] [--write] [--with-session] [--sandbox <read-only|workspace-write|danger-full-access|inherit>] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
       "  node scripts/codex-companion.mjs transfer [--source <claude-jsonl>] [--json]",
       "  node scripts/codex-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/codex-companion.mjs result [job-id] [--json]",
@@ -242,6 +242,61 @@ function loadReviewWorkspacePolicy() {
   return loadPromptTemplate(ROOT_DIR, "review-workspace-policy").trim();
 }
 
+function loadTaskWorkspacePolicy() {
+  return loadPromptTemplate(ROOT_DIR, "task-workspace-policy").trim();
+}
+
+const SANDBOX_MODES = ["read-only", "workspace-write", "danger-full-access", "inherit"];
+
+/**
+ * `inherit` (and the write-capable default) resolve to `null`, which tells the
+ * app-server layer to send no sandbox override at all. The plugin should not
+ * quietly narrow what the user already configured for Codex; a rescue that can
+ * write but cannot reach the network fails at `npm ci` for no stated reason.
+ */
+function normalizeSandboxMode(value) {
+  if (value == null) {
+    return undefined;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (!SANDBOX_MODES.includes(normalized)) {
+    throw new Error(`Unsupported sandbox "${value}". Use one of: ${SANDBOX_MODES.join(", ")}.`);
+  }
+  return normalized === "inherit" ? null : normalized;
+}
+
+function resolveTaskSandbox({ sandbox, write }) {
+  if (sandbox !== undefined) {
+    return sandbox;
+  }
+  return write ? null : "read-only";
+}
+
+/**
+ * `--write` and `--sandbox` can disagree, and silently picking a winner leaves
+ * the run mislabelled: a "write-capable" job that cannot write, or a job whose
+ * record says `write: false` while Codex is editing files. Reject the
+ * contradiction, and let an explicitly writable sandbox imply write-capable so
+ * the stored job tells the truth.
+ *
+ * `write` is an intent flag, not just a capability one -- status offers
+ * "review the changes" follow-ups off the back of it -- so an internal caller
+ * that asked for a wide sandbox to *inspect* with (the stop-time review gate)
+ * keeps its own declared intent.
+ */
+function reconcileWriteAndSandbox({ write, sandbox, internal = false }) {
+  if (write && sandbox === "read-only") {
+    throw new Error(
+      "`--write` cannot be combined with `--sandbox read-only`. Drop one: --write asks Codex to change the workspace, --sandbox read-only forbids it."
+    );
+  }
+  if (internal) {
+    return write;
+  }
+  const sandboxAllowsWrites = sandbox === "workspace-write" || sandbox === "danger-full-access";
+  return write || sandboxAllowsWrites;
+}
+
 function buildAdversarialReviewPrompt(context, focusText) {
   const template = loadPromptTemplate(ROOT_DIR, "adversarial-review");
   return interpolateTemplate(template, {
@@ -287,7 +342,7 @@ function buildNativeReviewTarget(target) {
 function validateNativeReviewRequest(target, focusText) {
   if (focusText.trim()) {
     throw new Error(
-      `\`/codex:review\` now maps directly to the built-in reviewer and does not support custom focus text. Retry with \`/codex:adversarial-review ${focusText.trim()}\` for focused review instructions.`
+      `\`/codex:review\` is the unsteered defect review and deliberately takes no focus text, so its results stay comparable run to run. Retry with \`/codex:adversarial-review ${focusText.trim()}\` for focused review instructions.`
     );
   }
 
@@ -398,7 +453,9 @@ async function executeReviewRun(request) {
         stderr: result.stderr,
         stdout: result.reviewText,
         reasoning: result.reasoningSummary
-      }
+      },
+      interrupted: result.status !== 0,
+      assessments: result.assessments ?? []
     };
     const rendered = renderNativeReviewResult(
       {
@@ -406,7 +463,12 @@ async function executeReviewRun(request) {
         stdout: result.reviewText,
         stderr: result.stderr
       },
-      { reviewLabel: reviewName, targetLabel: target.label, reasoningSummary: result.reasoningSummary }
+      {
+        reviewLabel: reviewName,
+        targetLabel: target.label,
+        reasoningSummary: result.reasoningSummary,
+        assessments: result.assessments ?? []
+      }
     );
 
     return {
@@ -415,7 +477,10 @@ async function executeReviewRun(request) {
       turnId: result.turnId,
       payload,
       rendered,
-      summary: firstMeaningfulLine(result.reviewText, `${reviewName} completed.`),
+      summary:
+        result.status === 0
+          ? firstMeaningfulLine(result.reviewText, `${reviewName} completed.`)
+          : `${reviewName} did not finish (turn status: ${result.turn?.status ?? "unknown"}), so it has no verdict.`,
       jobTitle: `Codex ${reviewName}`,
       jobClass: "review",
       targetLabel: target.label
@@ -431,10 +496,28 @@ async function executeReviewRun(request) {
     outputSchema: readOutputSchema(REVIEW_SCHEMA),
     onProgress: request.onProgress
   });
-  const parsed = parseStructuredOutput(result.finalMessage, {
-    status: result.status,
-    failureMessage: result.error?.message ?? result.stderr
-  });
+  // Only a completed turn produces a verdict.
+  //
+  // The output schema requires `verdict` on every assistant message, so the
+  // reviewer's mid-run status updates are themselves schema-valid review
+  // objects. Taking the last message from a turn that never completed would
+  // render one of those as a finished result -- reporting "approve" for a review
+  // that was interrupted before it reached a conclusion.
+  const parsed =
+    result.status === 0
+      ? parseStructuredOutput(result.finalMessage, {
+          status: result.status,
+          failureMessage: result.error?.message ?? result.stderr
+        })
+      : {
+          parsed: null,
+          interrupted: true,
+          parseError:
+            result.error?.message ??
+            `The review did not finish (turn status: ${result.turn?.status ?? "unknown"}). The text below is the reviewer's last interim message, not a verdict.`,
+          rawOutput: result.finalMessage ?? "",
+          status: result.status
+        };
   const payload = {
     review: reviewName,
     target,
@@ -453,6 +536,8 @@ async function executeReviewRun(request) {
     result: parsed.parsed,
     rawOutput: parsed.rawOutput,
     parseError: parsed.parseError,
+    interrupted: Boolean(parsed.interrupted),
+    assessments: result.assessments ?? [],
     reasoningSummary: result.reasoningSummary
   };
 
@@ -464,7 +549,8 @@ async function executeReviewRun(request) {
     rendered: renderReviewResult(parsed, {
       reviewLabel: reviewName,
       targetLabel: context.target.label,
-      reasoningSummary: result.reasoningSummary
+      reasoningSummary: result.reasoningSummary,
+      assessments: result.assessments ?? []
     }),
     summary: parsed.parsed?.summary ?? parsed.parseError ?? firstMeaningfulLine(result.finalMessage, `${reviewName} finished.`),
     jobTitle: `Codex ${reviewName}`,
@@ -492,19 +578,47 @@ async function executeTaskRun(request) {
       throw new Error("No previous Codex task thread was found for this repository.");
     }
     resumeThreadId = latestThread.id;
+  } else if (request.withSession) {
+    // Hand over what Claude already knows instead of making Codex rediscover it.
+    // The plugin can already import a Claude transcript into a Codex thread
+    // (`/codex:transfer`); starting the task on that thread means the delegate
+    // inherits the investigation -- the failing command, what was ruled out,
+    // which files were already read -- rather than a one-line summary of it.
+    request.onProgress?.({
+      message: "Transferring the Claude session into a Codex thread.",
+      phase: "starting"
+    });
+    const sourcePath = resolveClaudeSessionPath(request.cwd, { source: request.sessionSource });
+    const imported = await importExternalAgentSession(workspaceRoot, { sourcePath });
+    resumeThreadId = imported.threadId;
+    request.onProgress?.({
+      message: `Claude session available in thread ${resumeThreadId}.`,
+      phase: "starting",
+      threadId: resumeThreadId
+    });
   }
 
   if (!request.prompt && !resumeThreadId) {
     throw new Error("Provide a prompt, a prompt file, piped stdin, or use --resume-last.");
   }
 
+  const sandbox = resolveTaskSandbox({ sandbox: request.sandbox, write: request.write });
+  // A fresh write-capable run gets the workspace contract that replaces the
+  // narrower sandbox: say what "in scope" means rather than fencing the tools.
+  // Continuations already carry it from their first turn, and re-sending it
+  // would bury the follow-up instruction. A `--with-session` run resumes an
+  // imported thread but is still a first turn, so it does get the contract.
+  const wantsTaskPolicy =
+    request.prompt && !request.resumeLast && sandbox !== "read-only" && !request.noWorkspacePolicy;
+  const prompt = wantsTaskPolicy ? `${request.prompt.trim()}\n\n${loadTaskWorkspacePolicy()}` : request.prompt;
+
   const result = await runAppServerTurn(workspaceRoot, {
     resumeThreadId,
-    prompt: request.prompt,
+    prompt,
     defaultPrompt: resumeThreadId ? DEFAULT_CONTINUE_PROMPT : "",
     model: request.model,
     effort: request.effort,
-    sandbox: request.write ? "workspace-write" : "read-only",
+    sandbox,
     onProgress: request.onProgress,
     persistThread: true,
     threadName: resumeThreadId ? null : buildPersistentTaskThreadName(request.prompt || DEFAULT_CONTINUE_PROMPT)
@@ -570,7 +684,13 @@ function buildTaskRunMetadata({ prompt, resumeLast = false }) {
 }
 
 function renderQueuedTaskLaunch(payload) {
-  return `${payload.title} started in the background as ${payload.jobId}. Check /codex:status ${payload.jobId} for progress.\n`;
+  const lines = [
+    `${payload.title} started in the background as ${payload.jobId}. Check /codex:status ${payload.jobId} for progress.`
+  ];
+  if (payload.logFile) {
+    lines.push(`Live log: ${payload.logFile}`);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function getJobKindLabel(kind, jobClass) {
@@ -617,14 +737,30 @@ function buildTaskJob(workspaceRoot, taskMetadata, write) {
   });
 }
 
-function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId }) {
+function buildTaskRequest({
+  cwd,
+  model,
+  effort,
+  prompt,
+  write,
+  sandbox,
+  resumeLast,
+  withSession,
+  sessionSource,
+  noWorkspacePolicy,
+  jobId
+}) {
   return {
     cwd,
     model,
     effort,
     prompt,
     write,
+    sandbox,
     resumeLast,
+    withSession,
+    sessionSource,
+    noWorkspacePolicy,
     jobId
   };
 }
@@ -777,8 +913,22 @@ async function handleReview(argv) {
 
 async function handleTask(argv) {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ["model", "effort", "cwd", "prompt-file"],
-    booleanOptions: ["json", "write", "resume-last", "resume", "fresh", "background"],
+    valueOptions: ["model", "effort", "cwd", "prompt-file", "sandbox", "session-source"],
+    booleanOptions: [
+      "json",
+      "write",
+      "resume-last",
+      "resume",
+      "fresh",
+      "background",
+      "with-session",
+      // Internal: callers that already supply their own workspace contract (the
+      // stop-time review gate carries the review one) must not also receive the
+      // task contract, which tells the model to change things. Gated on
+      // INTERNAL_CALLER_ENV so the contract that justifies the wider sandbox
+      // cannot simply be switched off from the command line.
+      "no-workspace-policy"
+    ],
     aliasMap: {
       m: "model"
     }
@@ -788,6 +938,14 @@ async function handleTask(argv) {
   const workspaceRoot = resolveCommandWorkspace(options);
   const model = normalizeRequestedModel(options.model);
   const effort = normalizeReasoningEffort(options.effort);
+  const sandbox = normalizeSandboxMode(options.sandbox);
+  const internalCaller = process.env[INTERNAL_CALLER_ENV] === "1";
+  const noWorkspacePolicy = Boolean(options["no-workspace-policy"]);
+  if (noWorkspacePolicy && !internalCaller) {
+    throw new Error(
+      "`--no-workspace-policy` is internal to the stop-time review gate, which supplies its own workspace contract. A task that can write must carry one."
+    );
+  }
   const prompt = readTaskPrompt(cwd, options, positionals);
 
   const resumeLast = Boolean(options["resume-last"] || options.resume);
@@ -795,7 +953,13 @@ async function handleTask(argv) {
   if (resumeLast && fresh) {
     throw new Error("Choose either --resume/--resume-last or --fresh.");
   }
-  const write = Boolean(options.write);
+  const withSession = Boolean(options["with-session"]);
+  if (resumeLast && withSession) {
+    throw new Error(
+      "Choose either --resume/--resume-last or --with-session. A resumed Codex thread already carries its own history."
+    );
+  }
+  const write = reconcileWriteAndSandbox({ write: Boolean(options.write), sandbox, internal: internalCaller });
   const taskMetadata = buildTaskRunMetadata({
     prompt,
     resumeLast
@@ -812,7 +976,15 @@ async function handleTask(argv) {
       effort,
       prompt,
       write,
+      sandbox,
       resumeLast,
+      withSession,
+      // Resolve the transcript before detaching so an unresolvable session
+      // fails at the prompt instead of inside a background worker.
+      sessionSource: withSession
+        ? resolveClaudeSessionPath(cwd, { source: options["session-source"] })
+        : options["session-source"] ?? null,
+      noWorkspacePolicy,
       jobId: job.id
     });
     const { payload } = enqueueBackgroundTask(cwd, job, request);
@@ -830,7 +1002,11 @@ async function handleTask(argv) {
         effort,
         prompt,
         write,
+        sandbox,
         resumeLast,
+        withSession,
+        sessionSource: options["session-source"] ?? null,
+        noWorkspacePolicy,
         jobId: job.id,
         onProgress: progress
       }),

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 
 import { getSessionRuntimeStatus } from "./codex.mjs";
-import { getConfig, listJobs, readJobFile, resolveJobFile } from "./state.mjs";
+import { findJobsInAlternateStateDirs, getConfig, listJobs, readJobFile, resolveJobFile } from "./state.mjs";
 import { SESSION_ID_ENV } from "./tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 
@@ -207,7 +207,25 @@ function matchJobReference(jobs, reference, predicate = () => true) {
     throw new Error(`Job reference "${reference}" is ambiguous. Use a longer job id.`);
   }
 
-  throw new Error(`No job found for "${reference}". Run /codex:status to list known jobs.`);
+  // Miss, not error: callers layer their own message on top, and several of them
+  // (result, cancel) distinguish "no such job" from "job exists but is running".
+  return null;
+}
+
+/**
+ * Jobs live in a per-plugin-install store, so "not found here" often means
+ * "found somewhere else". Name the other store rather than implying the run is
+ * gone, which is what pushes people into re-running a review they already have.
+ */
+export function describeJobLookupMiss(cwd, reference = "") {
+  const alternates = findJobsInAlternateStateDirs(cwd, reference);
+  if (alternates.length === 0) {
+    return "";
+  }
+  const detail = alternates
+    .map(({ dir, jobIds }) => `${dir} (${jobIds.slice(0, 3).join(", ")}${jobIds.length > 3 ? ", ..." : ""})`)
+    .join("; ");
+  return ` Matching jobs exist in another Codex plugin store: ${detail}. That store belongs to a different install of this plugin, so reopen the repository under that install or read the job JSON directly.`;
 }
 
 export function buildStatusSnapshot(cwd, options = {}) {
@@ -244,7 +262,9 @@ export function buildSingleJobSnapshot(cwd, reference, options = {}) {
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
   const selected = matchJobReference(jobs, reference);
   if (!selected) {
-    throw new Error(`No job found for "${reference}". Run /codex:status to inspect known jobs.`);
+    throw new Error(
+      `No job found for "${reference}". Run /codex:status to inspect known jobs.${describeJobLookupMiss(cwd, reference)}`
+    );
   }
 
   return {
@@ -259,7 +279,11 @@ export function resolveResultJob(cwd, reference) {
   const selected = matchJobReference(
     jobs,
     reference,
-    (job) => job.status === "completed" || job.status === "failed" || job.status === "cancelled"
+    (job) =>
+      job.status === "completed" ||
+      job.status === "failed" ||
+      job.status === "cancelled" ||
+      job.status === "interrupted"
   );
 
   if (selected) {
@@ -272,7 +296,9 @@ export function resolveResultJob(cwd, reference) {
   }
 
   if (reference) {
-    throw new Error(`No finished job found for "${reference}". Run /codex:status to inspect active jobs.`);
+    throw new Error(
+      `No finished job found for "${reference}". Run /codex:status to inspect active jobs.${describeJobLookupMiss(cwd, reference)}`
+    );
   }
 
   throw new Error("No finished Codex jobs found for this repository yet.");
@@ -286,7 +312,7 @@ export function resolveCancelableJob(cwd, reference, options = {}) {
   if (reference) {
     const selected = matchJobReference(activeJobs, reference);
     if (!selected) {
-      throw new Error(`No active job found for "${reference}".`);
+      throw new Error(`No active job found for "${reference}".${describeJobLookupMiss(cwd, reference)}`);
     }
     return { workspaceRoot, job: selected };
   }

@@ -166,7 +166,12 @@ test("collectReviewContext falls back to lightweight context for larger adversar
   assert.equal(context.inputMode, "self-collect");
   assert.equal(context.fileCount, 3);
   assert.match(context.collectionGuidance, /lightweight summary/i);
-  assert.match(context.collectionGuidance, /read-only git commands/i);
+  assert.match(context.collectionGuidance, /Collect the diff yourself/i);
+  // Name the commands rather than gesturing at "inspect it yourself", and do not
+  // describe the reviewer as filesystem-restricted -- it no longer is.
+  assert.match(context.collectionGuidance, /git diff --cached/);
+  assert.match(context.collectionGuidance, /merge-base/);
+  assert.equal(/read-only git commands/i.test(context.collectionGuidance), false);
   assert.doesNotMatch(context.content, /SELF_COLLECT_MARKER_[ABC]/);
   assert.match(context.content, /## Changed Files/);
 });

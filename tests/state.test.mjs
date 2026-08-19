@@ -5,7 +5,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { makeTempDir } from "./helpers.mjs";
-import { resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState } from "../plugins/codex/scripts/lib/state.mjs";
+import {
+  findJobsInAlternateStateDirs,
+  listAlternateStateDirs,
+  resolveJobFile,
+  resolveJobLogFile,
+  resolveStateDir,
+  resolveStateDirName,
+  resolveStateFile,
+  saveState
+} from "../plugins/codex/scripts/lib/state.mjs";
 
 test("resolveStateDir uses a temp-backed per-workspace directory", () => {
   const workspace = makeTempDir();
@@ -101,5 +110,63 @@ test("saveState prunes dropped job artifacts when indexed jobs exceed the cap", 
     Array.from({ length: 50 }, (_, index) => `job-${index + 1}`)
       .flatMap((jobId) => [`${jobId}.json`, `${jobId}.log`])
       .sort()
+  );
+});
+
+test("listAlternateStateDirs finds the same workspace under sibling plugin installs and the temp fallback", () => {
+  const workspace = makeTempDir();
+  const pluginDataRoot = makeTempDir();
+  const activeDataDir = path.join(pluginDataRoot, "codex-spencer-codex");
+  const siblingDataDir = path.join(pluginDataRoot, "codex-inline");
+  const env = { CLAUDE_PLUGIN_DATA: activeDataDir };
+
+  const dirName = resolveStateDirName(workspace);
+  const activeDir = path.join(activeDataDir, "state", dirName);
+  const siblingDir = path.join(siblingDataDir, "state", dirName);
+  const fallbackDir = path.join(os.tmpdir(), "codex-companion", dirName);
+  const unrelatedDir = path.join(siblingDataDir, "state", "some-other-workspace-0123456789abcdef");
+
+  for (const dir of [activeDir, siblingDir, unrelatedDir]) {
+    fs.mkdirSync(path.join(dir, "jobs"), { recursive: true });
+  }
+  fs.writeFileSync(path.join(siblingDir, "jobs", "review-lost.json"), JSON.stringify({ id: "review-lost" }), "utf8");
+
+  const alternates = listAlternateStateDirs(workspace, env);
+
+  // The store this process is using is not an "alternate", and neither is an
+  // unrelated workspace that happens to live under the same sibling install.
+  assert.equal(alternates.includes(activeDir), false);
+  assert.equal(alternates.includes(unrelatedDir), false);
+  assert.equal(alternates.includes(siblingDir), true);
+  // The temp fallback is always considered, but only reported when it exists.
+  assert.equal(alternates.includes(fallbackDir), fs.existsSync(path.join(fallbackDir, "jobs")));
+
+  const matches = findJobsInAlternateStateDirs(workspace, "review-lost", env);
+  assert.deepEqual(
+    matches.map((match) => ({ dir: match.dir, jobIds: match.jobIds })),
+    [{ dir: siblingDir, jobIds: ["review-lost"] }]
+  );
+
+  // A prefix that matches nothing must not invent a location.
+  assert.deepEqual(findJobsInAlternateStateDirs(workspace, "review-absent", env), []);
+});
+
+test("listAlternateStateDirs finds the real stores even when CLAUDE_PLUGIN_DATA never arrived", () => {
+  const workspace = makeTempDir();
+  const pluginsDir = makeTempDir();
+  const dirName = resolveStateDirName(workspace);
+  const installDir = path.join(pluginsDir, "data", "codex-spencer-codex", "state", dirName);
+  fs.mkdirSync(path.join(installDir, "jobs"), { recursive: true });
+  fs.writeFileSync(path.join(installDir, "jobs", "review-orphan.json"), JSON.stringify({ id: "review-orphan" }), "utf8");
+
+  // No CLAUDE_PLUGIN_DATA: this process is running out of the temp fallback,
+  // which is exactly the situation where a job looks lost. Without probing the
+  // well-known plugins layout there is nothing to point at.
+  const env = { CLAUDE_CODE_PLUGIN_CACHE_DIR: pluginsDir };
+
+  assert.deepEqual(listAlternateStateDirs(workspace, env), [installDir]);
+  assert.deepEqual(
+    findJobsInAlternateStateDirs(workspace, "review-orphan", env),
+    [{ dir: installDir, jobIds: ["review-orphan"] }]
   );
 });

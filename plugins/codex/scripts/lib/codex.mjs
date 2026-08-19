@@ -59,27 +59,43 @@ function cleanCodexStderr(stderr) {
     .join("\n");
 }
 
+/**
+ * `undefined` keeps the historical read-only default; explicit `null` means
+ * "inherit the user's Codex configuration" and is sent by omitting the field,
+ * because `thread/start`'s `sandbox` is optional and falls back to config.
+ */
+function applySandboxParam(params, sandbox) {
+  if (sandbox === null) {
+    return params;
+  }
+  return { ...params, sandbox: sandbox ?? "read-only" };
+}
+
 /** @returns {ThreadStartParams} */
 function buildThreadParams(cwd, options = {}) {
-  return {
-    cwd,
-    model: options.model ?? null,
-    approvalPolicy: options.approvalPolicy ?? "never",
-    sandbox: options.sandbox ?? "read-only",
-    serviceName: SERVICE_NAME,
-    ephemeral: options.ephemeral ?? true
-  };
+  return applySandboxParam(
+    {
+      cwd,
+      model: options.model ?? null,
+      approvalPolicy: options.approvalPolicy ?? "never",
+      serviceName: SERVICE_NAME,
+      ephemeral: options.ephemeral ?? true
+    },
+    options.sandbox
+  );
 }
 
 /** @returns {ThreadResumeParams} */
 function buildResumeParams(threadId, cwd, options = {}) {
-  return {
-    threadId,
-    cwd,
-    model: options.model ?? null,
-    approvalPolicy: options.approvalPolicy ?? "never",
-    sandbox: options.sandbox ?? "read-only"
-  };
+  return applySandboxParam(
+    {
+      threadId,
+      cwd,
+      model: options.model ?? null,
+      approvalPolicy: options.approvalPolicy ?? "never"
+    },
+    options.sandbox
+  );
 }
 
 /** @returns {UserInput[]} */
@@ -343,6 +359,55 @@ function clearCompletionTimer(state) {
   }
 }
 
+/**
+ * The reviewer's interim messages, oldest first.
+ *
+ * A long review emits several assessments before it finishes, and the verdict
+ * drifting across them (approve -> needs-attention) is a real signal about where
+ * the reviewer's confidence is heading. The runtime used to keep only the last
+ * message and drop the rest, which both lost that signal and made an
+ * interrupted run indistinguishable from a finished one.
+ */
+const MAX_ASSESSMENTS = 20;
+const MAX_ASSESSMENT_TEXT = 2000;
+
+function readVerdict(text) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed.startsWith("{")) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    return typeof parsed?.verdict === "string" && parsed.verdict.trim() ? parsed.verdict.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function collectAssessments(state) {
+  const all = state.messages.filter(
+    (message) =>
+      message.lifecycle === "completed" &&
+      message.text &&
+      (!message.threadId || message.threadId === state.rootThreadId || message.threadId === state.threadId)
+  );
+  // Keep the most recent window: the final message always survives, and the
+  // full text of everything is already in the job log, so this payload only has
+  // to carry enough to show how the assessment moved.
+  const omittedBefore = Math.max(0, all.length - MAX_ASSESSMENTS);
+  return all.slice(-MAX_ASSESSMENTS).map((message, index) => {
+    const truncated = message.text.length > MAX_ASSESSMENT_TEXT;
+    return {
+      at: message.at,
+      phase: message.phase,
+      verdict: readVerdict(message.text),
+      text: truncated ? `${message.text.slice(0, MAX_ASSESSMENT_TEXT)}...` : message.text,
+      truncated,
+      ...(index === 0 && omittedBefore > 0 ? { omittedBefore } : {})
+    };
+  });
+}
+
 function completeTurn(state, turn = null, options = {}) {
   if (state.completed) {
     return;
@@ -350,6 +415,10 @@ function completeTurn(state, turn = null, options = {}) {
 
   clearCompletionTimer(state);
   state.completed = true;
+
+  if (!turn && options.inferred) {
+    state.finalTurn = { id: state.turnId, status: "completed", inferred: true };
+  }
 
   if (turn) {
     state.finalTurn = turn;
@@ -422,6 +491,8 @@ function recordItem(state, item, lifecycle, threadId = null) {
     state.messages.push({
       lifecycle,
       phase: item.phase ?? null,
+      threadId: threadId ?? state.threadId,
+      at: new Date().toISOString(),
       text: item.text ?? ""
     });
     if (item.text) {
@@ -589,6 +660,15 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
       state.threadTurnIds.set(state.threadId, state.turnId);
     }
     for (const message of state.bufferedNotifications) {
+      // Thread identity notifications carry the subagent's name and arrive
+      // before that thread is associated with this turn, so they get the same
+      // exemption here as in the live handler above. Without it, any
+      // notification that lands before `turn/start` resolves loses its label and
+      // every later log line for that subagent falls back to a raw thread id.
+      if (message.method === "thread/started" || message.method === "thread/name/updated") {
+        applyTurnNotification(state, message);
+        continue;
+      }
       if (belongsToTurn(state, message)) {
         applyTurnNotification(state, message);
       } else {
@@ -1047,6 +1127,7 @@ export async function runAppServerReview(cwd, options = {}) {
       sourceThreadId,
       turnId: turnState.turnId,
       reviewText: turnState.reviewText,
+      assessments: collectAssessments(turnState),
       reasoningSummary: turnState.reasoningSummary,
       turn: turnState.finalTurn,
       error: turnState.error,
@@ -1148,6 +1229,7 @@ export async function runAppServerTurn(cwd, options = {}) {
       threadId,
       turnId: turnState.turnId,
       finalMessage: turnState.lastAgentMessage,
+      assessments: collectAssessments(turnState),
       reasoningSummary: turnState.reasoningSummary,
       turn: turnState.finalTurn,
       error: turnState.error,
