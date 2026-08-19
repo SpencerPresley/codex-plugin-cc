@@ -570,7 +570,13 @@ function buildTaskRunMetadata({ prompt, resumeLast = false }) {
 }
 
 function renderQueuedTaskLaunch(payload) {
-  return `${payload.title} started in the background as ${payload.jobId}. Check /codex:status ${payload.jobId} for progress.\n`;
+  const lines = [
+    `${payload.title} started in the background as ${payload.jobId}. Check /codex:status ${payload.jobId} for progress.`
+  ];
+  if (payload.logFile) {
+    lines.push(`Live log: ${payload.logFile}`);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function getJobKindLabel(kind, jobClass) {

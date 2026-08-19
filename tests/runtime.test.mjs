@@ -2490,3 +2490,21 @@ test("transfer names the expected transcript path when it cannot be derived", ()
   assert.match(result.stderr, /Expected it at .*sess-missing-file\.jsonl/);
   assert.match(result.stderr, /--source/);
 });
+
+test("background launch prints the live log path so the run can be followed", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const launched = run("node", [SCRIPT, "task", "--background", "investigate the flaky test"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.equal(launched.status, 0, launched.stderr);
+  assert.match(launched.stdout, /started in the background as task-/);
+  // Progress is appended to this file as it happens, so it is the only way to
+  // watch a background run without polling status.
+  assert.match(launched.stdout, /Live log: .+\.log/);
+});
