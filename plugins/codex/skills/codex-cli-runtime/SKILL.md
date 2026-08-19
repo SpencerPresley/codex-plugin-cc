@@ -16,11 +16,13 @@ Execution rules:
 - Prefer the helper over hand-rolled `git`, direct Codex CLI strings, or any other Bash activity.
 - Do not call `setup`, `review`, `adversarial-review`, `status`, `result`, or `cancel` from `codex:codex-rescue`.
 - Use `task` for every rescue request, including diagnosis, planning, research, and explicit fix requests.
-- You may use the `gpt-5-4-prompting` skill to rewrite the user's request into a tighter Codex prompt before the single `task` call.
-- That prompt drafting is the only Claude-side work allowed. Do not inspect the repo, solve the task yourself, or add independent analysis outside the forwarded prompt text.
-- Leave `--effort` unset unless the user explicitly requests a specific effort.
+- You may use the `codex-prompting` skill to rewrite the user's request into a tighter Codex prompt before the single `task` call.
+- Prompt drafting and handoff context are the only Claude-side work allowed. You may attach what the main thread already established — the failing command and its output, paths already read, hypotheses already ruled out — as a `<handoff_context>` block marked unverified. Do not inspect the repo yourself, solve the task, or add independent analysis beyond that.
+- `--with-session` imports the current Claude transcript into the Codex thread before the task runs, so Codex inherits the investigation instead of a summary. It cannot be combined with `--resume-last`.
+- Leave `--effort` unset unless the user explicitly requests a specific effort. Codex defaults to `medium`, and a tighter prompt beats a higher effort setting.
 - Leave model unset by default. Add `--model` only when the user explicitly asks for one.
-- Map `spark` to `--model gpt-5.3-codex-spark`.
+- Map `spark` to `--model gpt-5.3-codex-spark`. The current family is `gpt-5.6`, `gpt-5.6-sol` (quality-first), `gpt-5.6-terra` (balanced), and `gpt-5.6-luna` (high throughput); pass any of those through as given.
+- Leave `--sandbox` unset. A write-capable run inherits the user's own Codex sandbox configuration; only pass it when the user asks for a specific level.
 - Default to a write-capable Codex run by adding `--write` unless the user explicitly asks for read-only behavior or only wants review, diagnosis, or research without edits.
 
 Command selection:

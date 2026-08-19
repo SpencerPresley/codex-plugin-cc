@@ -5,19 +5,19 @@ description: Use when running Codex reviews or delegating work through the Codex
 
 # Using Codex from Claude Code
 
-Codex (OpenAI GPT-5.5) is a second AI collaborator. Two shapes of use:
+Codex is a second AI collaborator from another model family. Two shapes of use:
 
 - **Review** (`review`, `adversarial-review`) — repository-preserving critique that does not intentionally edit or fix the reviewed work.
 - **Delegate** (`rescue`) — **write-capable** work handed to a Codex agent (debug, fix, implement, investigate).
 
 In *this* build the review commands are model-invokable, so you (Claude) can run them directly.
 
-> **Model version:** Codex currently routes to **GPT-5.5** (OpenAI's latest). Some plugin text — including the `gpt-5-4-prompting` skill name — still says "GPT-5.4"; that guidance applies unchanged to 5.5. Don't be thrown by the version label.
+> **Model:** Codex routes to whatever the user's Codex config selects — currently the **GPT-5.6** family (`gpt-5.6-sol` quality-first, `gpt-5.6-terra` balanced, `gpt-5.6-luna` high-throughput). Don't pin a model unless the user asks.
 
 ## Critical rules (non-negotiable)
 
 - **Reviews are repository-preserving, not filesystem read-only.** Codex runs without filesystem sandboxing so it can use its full toolset. It must not intentionally edit or fix the reviewed work, but legitimate inspection and verification commands may create caches, logs, build output, coverage data, or scratch probes. Those incidental writes are acceptable and are not a reason to panic, abandon the review, or silently implement cleanup. After presenting findings, STOP and ask the user which findings, if any, to fix.
-- **Return Codex output verbatim.** No paraphrasing or summarizing of review/rescue output. Present findings ordered by severity, with file paths and line numbers exactly as reported.
+- **Return Codex output verbatim.** No paraphrasing or summarizing of review/rescue output. Present findings ordered by severity, with file paths and line numbers exactly as reported. You may append one `## Claude's assessment` section *after* the verbatim block — see "Assessing the review" below.
 - **Know what intentionally writes.** `rescue` is write-capable and may edit the workspace. `review` and `adversarial-review` must not intentionally change reviewed files, configuration, the Git index, refs, or commits.
 - **Don't improvise auth.** If Codex isn't set up/authenticated, send the user to `/codex:setup`.
 
@@ -44,6 +44,8 @@ Hands a task to the `codex:codex-rescue` agent (debug, fix, implement, investiga
 - **Write-capable by default.** Use proactively for substantial, clearly-bounded handoffs; don't grab quick tasks you can finish yourself, and don't spawn nested Codex runs for trivial work.
 - `--model`/`--effort`: leave unset unless the user asks (Codex picks sane defaults). `spark` → `gpt-5.3-codex-spark`. Any other model name passes through.
 - `--resume` continues the latest rescue thread in this repo; `--fresh` forces a new one.
+- `--with-session` imports the current Claude session into the Codex thread first, so Codex starts from the actual investigation instead of a one-line restatement. Use it when the task depends on the conversation so far; it cannot be combined with `--resume`.
+- Sandbox: a write-capable rescue inherits the user's own Codex configuration rather than a narrower plugin-chosen one, so it can run the build, the tests, and the network calls a fix usually needs.
 - Return the agent's output verbatim.
 - Examples: `/codex:rescue investigate why the integration test is flaky`, `/codex:rescue --model spark fix the failing test`, `/codex:rescue --resume apply the top fix`.
 
@@ -56,19 +58,28 @@ Checks Codex CLI install/auth. Can toggle the optional **stop-time review gate**
 - **Background** (`--background`) for anything larger or unclear in size — reviews of multi-file changes take a while.
 - After backgrounding, the **user** follows up with the user-only commands below.
 
-## User-only commands (you can't invoke — route the user)
+## Following up on a background job
 
-After launching a background review/rescue, tell the user how to follow up:
-- `/codex:status [id]` — progress and recent jobs (also shows review-gate status).
+You can invoke these yourself:
+- `/codex:status [id]` — progress and recent jobs (also shows review-gate status and each job's live log path).
 - `/codex:result [id]` — the final stored output of a finished job.
-- `/codex:cancel [id]` — stop a running job.
 
-Jobs are tracked per workspace (max 50 retained) and filtered to the current session.
+Prefer `/codex:status <id> --wait --timeout-ms <ms>` over polling: one blocking call beats a poll loop. The status output names the job's log file, which is written line-by-line while the run is in flight — read it if you need to see what Codex is doing mid-run.
+
+These stay user-only, so route the user instead of invoking them:
+- `/codex:cancel [id]` — stops a running job and throws away in-flight work.
+- `/codex:transfer` — hands the user's Claude session to Codex.
+
+Jobs are tracked per workspace (max 50 retained). The default `/codex:status` view is scoped to the current Claude session; `--all` shows every retained job. Results survive the session that produced them — a job that was still running when a session ended is recorded as `interrupted`, not deleted. If a job id cannot be found, the error names the other plugin-install store it lives in rather than implying the run is gone.
+
+## Assessing the review
+
+Running a second model is only worth it if its output can be argued with. After the verbatim block you may add one `## Claude's assessment` section when you have something checkable: a finding you can disprove, a `file:line` the reviewer misread, a consequence it missed, or a severity you would rank differently — each with the evidence attached. Skip the section entirely when you only agree. Never edit files off the back of a review without being asked.
 
 ## Review output shape
 
 Both review commands return JSON against a fixed schema:
-- `verdict`: `approve` | `needs-attention`.
+- `verdict`: `approve` | `needs-attention`. A run that was interrupted has **no** verdict: the plugin reports it as unfinished and shows the reviewer's last interim message, labelled as not a verdict. Do not read that message as a result.
 - `findings[]`: each has `severity` (`critical|high|medium|low`), `title`, `body`, `file`, `line_start`, `line_end`, `confidence` (0–1), `recommendation`.
 - `next_steps[]`: short follow-up actions.
 
@@ -76,13 +87,13 @@ Present findings severity-ordered; preserve confidence and any "inference/uncert
 
 ## Prompting Codex (when shaping a rescue prompt)
 
-GPT-5.5 responds best to compact, XML-block prompts. Assemble only the blocks the task needs:
+Codex responds best to compact, XML-block prompts. GPT-5.6 is concise and proactive by default, so state the goal, the success criteria, and the boundaries — then stop. Assemble only the blocks the task needs:
 
 - Always: `<task>` (exact job + scope) + the smallest output contract (`<structured_output_contract>` or `<compact_output_contract>`).
 - Add as needed: `<default_follow_through_policy>` (act vs stop-and-ask), `<verification_loop>` (correctness), `<grounding_rules>` (don't invent — for review/research), `<action_safety>` (write-capable/broad tasks), `<missing_context_gating>` (don't guess).
 
-Recipes (block combos): **Diagnosis**, **Narrow Fix**, **Root-Cause Review**, **Research/Recommendation**, **Prompt-Patching**. The plugin's `gpt-5-4-prompting` skill has the full templates.
+Recipes (block combos): **Diagnosis**, **Narrow Fix**, **Root-Cause Review**, **Research/Recommendation**, **Prompt-Patching**. The plugin's `codex-prompting` skill has the full templates and the GPT-5.6 specifics.
 
-Antipatterns to avoid: vague task framing ("take a look"), no output contract, mixing unrelated jobs in one run, asking for "more reasoning" instead of a tighter contract, and unsupported certainty (ground claims).
+Antipatterns to avoid: vague task framing ("take a look"), no output contract, mixing unrelated jobs in one run, asking for "more reasoning" instead of a tighter contract, repeating the same rule in several blocks, blanket "always/never" for judgment calls, and unsupported certainty (ground claims).
 
 One task per run — split unrelated asks into separate Codex runs.
