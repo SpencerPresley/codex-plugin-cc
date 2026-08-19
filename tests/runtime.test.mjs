@@ -2803,3 +2803,53 @@ test("result for a job that is still running says so instead of claiming it does
   assert.match(result.stderr, /is still running/i);
   assert.equal(/No finished job found/.test(result.stderr), false);
 });
+
+test("an unfinished native review does not report a summary that says it completed", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "native-review-interrupted");
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "app.js"), "export const noop = () => {};\n");
+
+  const result = run("node", [SCRIPT, "review", "--json"], { cwd: repo, env: buildEnv(binDir) });
+  const payload = JSON.parse(result.stdout);
+
+  assert.equal(payload.interrupted, true);
+  // /codex:status shows the summary, so a status-blind summary is the first
+  // thing you would read -- and it used to fall back to the word "completed".
+  const stateDir = resolveStateDir(repo);
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  assert.match(state.jobs[0].summary, /did not finish/);
+  assert.equal(/completed\./.test(state.jobs[0].summary), false);
+});
+
+test("the retained assessment timeline is bounded and says what it dropped", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "review-chatty");
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "app.js"), "export const noop = () => {};\n");
+
+  const result = run("node", [SCRIPT, "adversarial-review", "--json"], { cwd: repo, env: buildEnv(binDir) });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+
+  // 25 messages in, 20 retained: the payload is read whole by /codex:result, so
+  // it cannot grow with the length of the run. The full text stays in the log.
+  assert.equal(payload.assessments.length, 20);
+  assert.equal(payload.assessments[0].omittedBefore, 5);
+  assert.equal(payload.assessments[0].truncated, true);
+  assert.equal(payload.assessments[0].text.length <= 2004, true);
+  // The final message always survives the window and stays the verdict.
+  assert.equal(payload.result.verdict, "needs-attention");
+
+  const rendered = run("node", [SCRIPT, "adversarial-review"], { cwd: repo, env: buildEnv(binDir) });
+  assert.match(rendered.stdout, /Assessment moved: \.\.\. \(5 earlier\) -> approve/);
+  assert.match(rendered.stdout, /-> needs-attention \(final\)/);
+});

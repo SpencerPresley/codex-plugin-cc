@@ -368,15 +368,44 @@ function clearCompletionTimer(state) {
  * message and drop the rest, which both lost that signal and made an
  * interrupted run indistinguishable from a finished one.
  */
+const MAX_ASSESSMENTS = 20;
+const MAX_ASSESSMENT_TEXT = 2000;
+
+function readVerdict(text) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed.startsWith("{")) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    return typeof parsed?.verdict === "string" && parsed.verdict.trim() ? parsed.verdict.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 function collectAssessments(state) {
-  return state.messages
-    .filter(
-      (message) =>
-        message.lifecycle === "completed" &&
-        message.text &&
-        (!message.threadId || message.threadId === state.rootThreadId || message.threadId === state.threadId)
-    )
-    .map((message) => ({ at: message.at, phase: message.phase, text: message.text }));
+  const all = state.messages.filter(
+    (message) =>
+      message.lifecycle === "completed" &&
+      message.text &&
+      (!message.threadId || message.threadId === state.rootThreadId || message.threadId === state.threadId)
+  );
+  // Keep the most recent window: the final message always survives, and the
+  // full text of everything is already in the job log, so this payload only has
+  // to carry enough to show how the assessment moved.
+  const omittedBefore = Math.max(0, all.length - MAX_ASSESSMENTS);
+  return all.slice(-MAX_ASSESSMENTS).map((message, index) => {
+    const truncated = message.text.length > MAX_ASSESSMENT_TEXT;
+    return {
+      at: message.at,
+      phase: message.phase,
+      verdict: readVerdict(message.text),
+      text: truncated ? `${message.text.slice(0, MAX_ASSESSMENT_TEXT)}...` : message.text,
+      truncated,
+      ...(index === 0 && omittedBefore > 0 ? { omittedBefore } : {})
+    };
+  });
 }
 
 function completeTurn(state, turn = null, options = {}) {

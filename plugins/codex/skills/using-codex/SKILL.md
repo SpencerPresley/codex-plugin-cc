@@ -80,6 +80,7 @@ Running a second model is only worth it if its output can be argued with. After 
 
 Both review commands return JSON against a fixed schema:
 - `verdict`: `approve` | `needs-attention`. A run that was interrupted has **no** verdict: the plugin reports it as unfinished and shows the reviewer's last interim message, labelled as not a verdict. Do not read that message as a result.
+- An `Assessment moved: approve -> needs-attention (final)` line appears when the reviewer's interim verdicts changed during the run. Treat it as signal about how confident the final verdict is, and pass it through with the rest of the output.
 - `findings[]`: each has `severity` (`critical|high|medium|low`), `title`, `body`, `file`, `line_start`, `line_end`, `confidence` (0–1), `recommendation`.
 - `next_steps[]`: short follow-up actions.
 

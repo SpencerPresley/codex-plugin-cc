@@ -428,7 +428,9 @@ async function executeReviewRun(request) {
         stderr: result.stderr,
         stdout: result.reviewText,
         reasoning: result.reasoningSummary
-      }
+      },
+      interrupted: result.status !== 0,
+      assessments: result.assessments ?? []
     };
     const rendered = renderNativeReviewResult(
       {
@@ -436,7 +438,12 @@ async function executeReviewRun(request) {
         stdout: result.reviewText,
         stderr: result.stderr
       },
-      { reviewLabel: reviewName, targetLabel: target.label, reasoningSummary: result.reasoningSummary }
+      {
+        reviewLabel: reviewName,
+        targetLabel: target.label,
+        reasoningSummary: result.reasoningSummary,
+        assessments: result.assessments ?? []
+      }
     );
 
     return {
@@ -445,7 +452,10 @@ async function executeReviewRun(request) {
       turnId: result.turnId,
       payload,
       rendered,
-      summary: firstMeaningfulLine(result.reviewText, `${reviewName} completed.`),
+      summary:
+        result.status === 0
+          ? firstMeaningfulLine(result.reviewText, `${reviewName} completed.`)
+          : `${reviewName} did not finish (turn status: ${result.turn?.status ?? "unknown"}), so it has no verdict.`,
       jobTitle: `Codex ${reviewName}`,
       jobClass: "review",
       targetLabel: target.label
@@ -514,7 +524,8 @@ async function executeReviewRun(request) {
     rendered: renderReviewResult(parsed, {
       reviewLabel: reviewName,
       targetLabel: context.target.label,
-      reasoningSummary: result.reasoningSummary
+      reasoningSummary: result.reasoningSummary,
+      assessments: result.assessments ?? []
     }),
     summary: parsed.parsed?.summary ?? parsed.parseError ?? firstMeaningfulLine(result.finalMessage, `${reviewName} finished.`),
     jobTitle: `Codex ${reviewName}`,

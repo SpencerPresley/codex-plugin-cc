@@ -417,6 +417,17 @@ rl.on("line", (line) => {
       case "review/start": {
         state.lastReviewStart = message.params;
         saveState(state);
+        if (BEHAVIOR === "native-review-interrupted") {
+          const thread0 = ensureThread(state, message.params.threadId);
+          const turn0 = nextTurnId(state);
+          send({ id: message.id, result: { turn: buildTurn(turn0), reviewThreadId: thread0.id } });
+          send({
+            method: "item/started",
+            params: { threadId: thread0.id, turnId: turn0, item: { type: "enteredReviewMode", id: turn0, review: "current changes" } }
+          });
+          send({ method: "turn/completed", params: { threadId: thread0.id, turn: buildTurn(turn0, "failed") } });
+          break;
+        }
         const thread = ensureThread(state, message.params.threadId);
         let reviewThread = thread;
         if (message.params.delivery === "detached") {
@@ -617,6 +628,32 @@ rl.on("line", (line) => {
             completed: { type: "agentMessage", id: "msg_" + turnId, text: payload, phase: "final_answer" }
           }
         ];
+
+	        if (BEHAVIOR === "review-chatty") {
+	          send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
+	          for (let i = 0; i < 25; i += 1) {
+	            send({
+	              method: "item/completed",
+	              params: {
+	                threadId: thread.id,
+	                turnId,
+	                item: {
+	                  type: "agentMessage",
+	                  id: "msg_" + turnId + "_" + i,
+	                  text: JSON.stringify({
+	                    verdict: i < 24 ? "approve" : "needs-attention",
+	                    summary: "step " + i + " " + "x".repeat(3000),
+	                    findings: [],
+	                    next_steps: []
+	                  }),
+	                  phase: i === 24 ? "final_answer" : "analysis"
+	                }
+	              }
+	            });
+	          }
+	          send({ method: "turn/completed", params: { threadId: thread.id, turn: buildTurn(turnId, "completed") } });
+	          break;
+	        }
 
 	        if (BEHAVIOR === "review-interrupted") {
 	          // The output schema forces a verdict onto every assistant message, so
