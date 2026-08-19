@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { getCodexAvailability } from "./lib/codex.mjs";
 import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
+import { INTERNAL_CALLER_ENV } from "./lib/process.mjs";
 import { getConfig, listJobs } from "./lib/state.mjs";
 import { sortJobsNewestFirst } from "./lib/job-control.mjs";
 import { SESSION_ID_ENV } from "./lib/tracked-jobs.mjs";
@@ -112,6 +113,7 @@ function runStopReview(cwd, input = {}) {
   const prompt = buildStopReviewPrompt(input);
   const childEnv = {
     ...process.env,
+    [INTERNAL_CALLER_ENV]: "1",
     ...(input.session_id ? { [SESSION_ID_ENV]: input.session_id } : {})
   };
   // The gate is a review: it gets full reach, but its prompt already carries the

@@ -2853,3 +2853,45 @@ test("the retained assessment timeline is bounded and says what it dropped", () 
   assert.match(rendered.stdout, /Assessment moved: \.\.\. \(5 earlier\) -> approve/);
   assert.match(rendered.stdout, /-> needs-attention \(final\)/);
 });
+
+test("--write and --sandbox cannot contradict each other silently", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const contradiction = run("node", [SCRIPT, "task", "--write", "--sandbox", "read-only", "fix it"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.notEqual(contradiction.status, 0);
+  assert.match(contradiction.stderr, /`--write` cannot be combined with `--sandbox read-only`/);
+
+  // A sandbox that permits writes makes the run write-capable, so the stored
+  // job record must not claim otherwise.
+  const implied = run("node", [SCRIPT, "task", "--sandbox", "workspace-write", "--json", "fix it"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(implied.status, 0, implied.stderr);
+  const stateDir = resolveStateDir(repo);
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  assert.equal(state.jobs[0].write, true);
+});
+
+test("--no-workspace-policy is refused from the command line", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const result = run("node", [SCRIPT, "task", "--write", "--no-workspace-policy", "fix it"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.notEqual(result.status, 0);
+  // The contract is what justifies the wider sandbox; it must not be reachable
+  // as a plain flag.
+  assert.match(result.stderr, /internal to the stop-time review gate/);
+});

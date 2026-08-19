@@ -145,7 +145,7 @@ It supports `--background`, `--wait`, `--resume`, `--fresh`, and `--with-session
 
 `--with-session` imports the current Claude session into the Codex thread before the task runs, so Codex starts from the actual investigation — the failing command, what was already ruled out — instead of a one-line restatement of it. It cannot be combined with `--resume`, because a resumed Codex thread already carries its own history.
 
-A write-capable rescue inherits the sandbox from your own Codex configuration rather than a narrower one chosen by the plugin, so it can run the build, the test suite, and any network calls the fix needs. Pass `--sandbox read-only|workspace-write|danger-full-access|inherit` to pin a specific level for one run.
+A write-capable rescue inherits the sandbox from your own Codex configuration rather than a narrower one chosen by the plugin, so it can run the build, the test suite, and any network calls the fix needs. Pass `--sandbox read-only|workspace-write|danger-full-access|inherit` to pin a specific level for one run. `--write` and `--sandbox read-only` contradict each other and are rejected rather than silently resolved; a sandbox that permits writes makes the run write-capable in its own right.
 
 Examples:
 

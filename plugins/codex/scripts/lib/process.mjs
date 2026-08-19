@@ -1,6 +1,13 @@
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
+/**
+ * Set to "1" only by the plugin's own hooks when they invoke the companion CLI.
+ * Gates flags that exist for internal callers and would weaken a user-facing
+ * contract if they were reachable from the command line.
+ */
+export const INTERNAL_CALLER_ENV = "CODEX_COMPANION_INTERNAL_CALLER";
+
 export function runCommand(command, args = [], options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd,

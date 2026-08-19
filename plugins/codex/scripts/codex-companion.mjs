@@ -24,7 +24,7 @@ import {
 import { resolveClaudeSessionPath } from "./lib/claude-session-transfer.mjs";
 import { readStdinIfPiped } from "./lib/fs.mjs";
 import { collectReviewContext, ensureGitRepository, resolveReviewTarget } from "./lib/git.mjs";
-import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
+import { binaryAvailable, INTERNAL_CALLER_ENV, terminateProcessTree } from "./lib/process.mjs";
 import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
 import {
   generateJobId,
@@ -270,6 +270,23 @@ function resolveTaskSandbox({ sandbox, write }) {
     return sandbox;
   }
   return write ? null : "read-only";
+}
+
+/**
+ * `--write` and `--sandbox` can disagree, and silently picking a winner leaves
+ * the run mislabelled: a "write-capable" job that cannot write, or a job whose
+ * record says `write: false` while Codex is editing files. Reject the
+ * contradiction, and let an explicitly writable sandbox imply write-capable so
+ * the stored job tells the truth.
+ */
+function reconcileWriteAndSandbox({ write, sandbox }) {
+  if (write && sandbox === "read-only") {
+    throw new Error(
+      "`--write` cannot be combined with `--sandbox read-only`. Drop one: --write asks Codex to change the workspace, --sandbox read-only forbids it."
+    );
+  }
+  const sandboxAllowsWrites = sandbox === "workspace-write" || sandbox === "danger-full-access";
+  return write || sandboxAllowsWrites;
 }
 
 function buildAdversarialReviewPrompt(context, focusText) {
@@ -899,7 +916,9 @@ async function handleTask(argv) {
       "with-session",
       // Internal: callers that already supply their own workspace contract (the
       // stop-time review gate carries the review one) must not also receive the
-      // task contract, which tells the model to change things.
+      // task contract, which tells the model to change things. Gated on
+      // INTERNAL_CALLER_ENV so the contract that justifies the wider sandbox
+      // cannot simply be switched off from the command line.
       "no-workspace-policy"
     ],
     aliasMap: {
@@ -913,6 +932,11 @@ async function handleTask(argv) {
   const effort = normalizeReasoningEffort(options.effort);
   const sandbox = normalizeSandboxMode(options.sandbox);
   const noWorkspacePolicy = Boolean(options["no-workspace-policy"]);
+  if (noWorkspacePolicy && process.env[INTERNAL_CALLER_ENV] !== "1") {
+    throw new Error(
+      "`--no-workspace-policy` is internal to the stop-time review gate, which supplies its own workspace contract. A task that can write must carry one."
+    );
+  }
   const prompt = readTaskPrompt(cwd, options, positionals);
 
   const resumeLast = Boolean(options["resume-last"] || options.resume);
@@ -926,7 +950,7 @@ async function handleTask(argv) {
       "Choose either --resume/--resume-last or --with-session. A resumed Codex thread already carries its own history."
     );
   }
-  const write = Boolean(options.write);
+  const write = reconcileWriteAndSandbox({ write: Boolean(options.write), sandbox });
   const taskMetadata = buildTaskRunMetadata({
     prompt,
     resumeLast
