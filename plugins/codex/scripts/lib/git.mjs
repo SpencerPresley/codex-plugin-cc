@@ -297,7 +297,11 @@ function buildAdversarialCollectionGuidance(options = {}) {
     return "Use the repository context below as primary evidence.";
   }
 
-  return "The repository context below is a lightweight summary. Inspect the target diff yourself with read-only git commands before finalizing findings.";
+  return [
+    "The repository context below is a lightweight summary, not the diff.",
+    "Collect the diff yourself before finalizing findings. For a working-tree review that is `git status --short --untracked-files=all`, `git diff --cached`, and `git diff`; for a branch review it is `git diff <merge-base>` against the merge-base named in the summary.",
+    "You are not filesystem-restricted: read the surrounding code, and run the repository's own checks when that produces better evidence, within the workspace policy above."
+  ].join("\n");
 }
 
 export function collectReviewContext(cwd, target, options = {}) {

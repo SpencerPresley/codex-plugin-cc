@@ -456,7 +456,7 @@ test("adversarial review asks Codex to inspect larger diffs itself", () => {
   assert.equal(result.status, 0, result.stderr);
   const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
   assert.match(state.lastTurnStart.prompt, /lightweight summary/i);
-  assert.match(state.lastTurnStart.prompt, /read-only git commands/i);
+  assert.match(state.lastTurnStart.prompt, /Collect the diff yourself/i);
   assert.doesNotMatch(state.lastTurnStart.prompt, /PROMPT_SELF_COLLECT_[ABC]/);
 });
 
@@ -1132,7 +1132,10 @@ test("review rejects focus text so its results stay comparable across runs", () 
   });
 
   assert.equal(result.status > 0, true);
-  assert.match(result.stderr, /does not support custom focus text/i);
+  // The plugin now sends a custom instruction block for every review target, so
+  // this is a deliberate split between a steerable and an unsteered command --
+  // the error should say that rather than blaming a protocol limit.
+  assert.match(result.stderr, /deliberately takes no focus text/i);
   assert.match(result.stderr, /\/codex:adversarial-review focus on auth/i);
 });
 
