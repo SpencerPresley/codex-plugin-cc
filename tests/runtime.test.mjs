@@ -2428,3 +2428,65 @@ test("result for a job that is still running says so instead of claiming it does
   assert.match(result.stderr, /is still running/i);
   assert.equal(/No finished job found/.test(result.stderr), false);
 });
+
+test("transfer derives the transcript from the Claude session id when the hook never recorded it", () => {
+  const home = makeTempDir();
+  const repo = path.join(home, "repo");
+  const binDir = makeTempDir();
+  const sessionId = "sess-derived-transfer";
+  fs.mkdirSync(repo, { recursive: true });
+  const projectDir = path.join(home, ".claude", "projects", "-repo");
+  const sourcePath = path.join(projectDir, `${sessionId}.jsonl`);
+  fs.mkdirSync(projectDir, { recursive: true });
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  fs.writeFileSync(
+    sourcePath,
+    `${JSON.stringify({ type: "user", cwd: repo, message: { role: "user", content: "Derived request" } })}\n`,
+    "utf8"
+  );
+
+  // No CODEX_COMPANION_TRANSCRIPT_PATH: this is the state you are in when the
+  // plugin was enabled mid-session or the SessionStart hook did not run.
+  const result = run("node", [SCRIPT, "transfer", "--json"], {
+    cwd: repo,
+    env: {
+      ...buildEnv(binDir),
+      HOME: home,
+      CODEX_HOME: path.join(home, ".codex"),
+      CLAUDE_CODE_SESSION_ID: sessionId
+    }
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.sourcePath, fs.realpathSync(sourcePath));
+  assert.equal(payload.sessionId, sessionId);
+});
+
+test("transfer names the expected transcript path when it cannot be derived", () => {
+  const home = makeTempDir();
+  const repo = path.join(home, "repo");
+  const binDir = makeTempDir();
+  fs.mkdirSync(repo, { recursive: true });
+  fs.mkdirSync(path.join(home, ".claude", "projects"), { recursive: true });
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const result = run("node", [SCRIPT, "transfer"], {
+    cwd: repo,
+    env: {
+      ...buildEnv(binDir),
+      HOME: home,
+      CODEX_HOME: path.join(home, ".codex"),
+      CLAUDE_CODE_SESSION_ID: "sess-missing-file"
+    }
+  });
+
+  assert.notEqual(result.status, 0);
+  // The error has to name a concrete path; "retry with --source" alone leaves
+  // the user with nothing to type.
+  assert.match(result.stderr, /Expected it at .*sess-missing-file\.jsonl/);
+  assert.match(result.stderr, /--source/);
+});
