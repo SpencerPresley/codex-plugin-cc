@@ -63,22 +63,43 @@ export function resolveStateDir(cwd) {
  * We cannot merge the stores safely, but we can find them and say where the job
  * actually lives.
  */
+function listPluginDataParents(env = process.env) {
+  const parents = [];
+
+  const pluginDataDir = env[PLUGIN_DATA_ENV];
+  if (pluginDataDir) {
+    parents.push(path.dirname(pluginDataDir));
+  }
+
+  // When CLAUDE_PLUGIN_DATA never arrived we are running out of the temp
+  // fallback and have no pointer back to the real stores, which is precisely
+  // the case where a job looks lost. Claude Code's layout is well known --
+  // <plugins dir>/data/<plugin id> -- so probe it directly.
+  const cacheOverride = env.CLAUDE_CODE_PLUGIN_CACHE_DIR;
+  const home = os.homedir();
+  const pluginRoots = cacheOverride
+    ? [cacheOverride]
+    : [path.join(home, ".claude", "plugins"), path.join(home, ".claude", "cowork_plugins")];
+  for (const root of pluginRoots) {
+    parents.push(path.join(root, "data"));
+  }
+
+  return [...new Set(parents)];
+}
+
 export function listAlternateStateDirs(cwd, env = process.env) {
   const dirName = resolveStateDirName(cwd);
   const activeDir = path.join(resolveStateRoot(env), dirName);
   const candidates = new Set();
 
-  const pluginDataDir = env[PLUGIN_DATA_ENV];
-  if (pluginDataDir) {
-    // Sibling plugin-data roots: <...>/plugins/data/<plugin-identity>/state/<dir>
-    const dataParent = path.dirname(pluginDataDir);
-    let siblings = [];
+  for (const dataParent of listPluginDataParents(env)) {
+    let installs = [];
     try {
-      siblings = fs.readdirSync(dataParent, { withFileTypes: true });
+      installs = fs.readdirSync(dataParent, { withFileTypes: true });
     } catch {
-      siblings = [];
+      continue;
     }
-    for (const entry of siblings) {
+    for (const entry of installs) {
       if (!entry.isDirectory()) {
         continue;
       }

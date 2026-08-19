@@ -150,3 +150,23 @@ test("listAlternateStateDirs finds the same workspace under sibling plugin insta
   // A prefix that matches nothing must not invent a location.
   assert.deepEqual(findJobsInAlternateStateDirs(workspace, "review-absent", env), []);
 });
+
+test("listAlternateStateDirs finds the real stores even when CLAUDE_PLUGIN_DATA never arrived", () => {
+  const workspace = makeTempDir();
+  const pluginsDir = makeTempDir();
+  const dirName = resolveStateDirName(workspace);
+  const installDir = path.join(pluginsDir, "data", "codex-spencer-codex", "state", dirName);
+  fs.mkdirSync(path.join(installDir, "jobs"), { recursive: true });
+  fs.writeFileSync(path.join(installDir, "jobs", "review-orphan.json"), JSON.stringify({ id: "review-orphan" }), "utf8");
+
+  // No CLAUDE_PLUGIN_DATA: this process is running out of the temp fallback,
+  // which is exactly the situation where a job looks lost. Without probing the
+  // well-known plugins layout there is nothing to point at.
+  const env = { CLAUDE_CODE_PLUGIN_CACHE_DIR: pluginsDir };
+
+  assert.deepEqual(listAlternateStateDirs(workspace, env), [installDir]);
+  assert.deepEqual(
+    findJobsInAlternateStateDirs(workspace, "review-orphan", env),
+    [{ dir: installDir, jobIds: ["review-orphan"] }]
+  );
+});
