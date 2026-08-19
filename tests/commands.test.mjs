@@ -176,7 +176,11 @@ test("rescue command absorbs continue semantics", () => {
   assert.match(runtimeSkill, /If the Bash call fails or Codex cannot be invoked, return nothing/i);
   assert.match(readme, /`codex:codex-rescue` subagent/i);
   assert.match(readme, /if you do not pass `--model` or `--effort`, Codex chooses its own defaults/i);
-  assert.match(readme, /--model gpt-5\.4-mini --effort medium/i);
+  assert.match(readme, /--effort medium/i);
+  assert.match(readme, /--with-session/);
+  // The README must not advertise a model generation the plugin no longer
+  // routes to by default.
+  assert.equal(/gpt-5\.4-mini/.test(readme), false);
   assert.match(readme, /`spark`, the plugin maps that to `gpt-5\.3-codex-spark`/i);
   assert.match(readme, /continue a previous Codex task/i);
   assert.match(readme, /### `\/codex:setup`/);

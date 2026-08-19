@@ -141,7 +141,11 @@ Use it when you want Codex to:
 > [!NOTE]
 > Depending on the task and the model you choose these tasks might take a long time and it's generally recommended to force the task to be in the background or move the agent to the background.
 
-It supports `--background`, `--wait`, `--resume`, and `--fresh`. If you omit `--resume` and `--fresh`, the plugin can offer to continue the latest rescue thread for this repo.
+It supports `--background`, `--wait`, `--resume`, `--fresh`, and `--with-session`. If you omit `--resume` and `--fresh`, the plugin can offer to continue the latest rescue thread for this repo.
+
+`--with-session` imports the current Claude session into the Codex thread before the task runs, so Codex starts from the actual investigation — the failing command, what was already ruled out — instead of a one-line restatement of it. It cannot be combined with `--resume`, because a resumed Codex thread already carries its own history.
+
+A write-capable rescue inherits the sandbox from your own Codex configuration rather than a narrower one chosen by the plugin, so it can run the build, the test suite, and any network calls the fix needs. Pass `--sandbox read-only|workspace-write|danger-full-access|inherit` to pin a specific level for one run.
 
 Examples:
 
@@ -149,8 +153,9 @@ Examples:
 /codex:rescue investigate why the tests started failing
 /codex:rescue fix the failing test with the smallest safe patch
 /codex:rescue --resume apply the top fix from the last run
-/codex:rescue --model gpt-5.4-mini --effort medium investigate the flaky integration test
+/codex:rescue --effort medium investigate the flaky integration test
 /codex:rescue --model spark fix the issue quickly
+/codex:rescue --with-session fix the bug we have been tracing
 /codex:rescue --background investigate the regression
 ```
 
@@ -197,6 +202,11 @@ Use it to:
 - check progress on background work
 - see the latest completed job
 - confirm whether a task is still running
+- find a job's live log file, which is written line-by-line while the job runs, so you can `tail -f` it
+
+By default it lists jobs from the current Claude session; pass `--all` to see every retained job for the repository. `/codex:status <id> --wait` blocks until that job finishes.
+
+Results outlive the session that produced them. Ending a Claude session settles anything still in flight — running jobs are stopped and recorded as `interrupted` — but finished results and their logs stay on disk (the most recent 50 jobs per repository). Claude can run `/codex:status` and `/codex:result` itself, so it can follow a background job it launched instead of handing you a job id and going quiet.
 
 ### `/codex:result`
 
@@ -212,7 +222,7 @@ Examples:
 
 ### `/codex:cancel`
 
-Cancels an active background Codex job.
+Cancels an active background Codex job. This one stays user-only: it throws away in-flight work, so Claude will route you here rather than cancelling on its own.
 
 Examples:
 
@@ -274,12 +284,14 @@ The Codex plugin wraps the [Codex app server](https://developers.openai.com/code
 
 ### Common Configurations
 
-If you want to change the default reasoning effort or the default model that gets used by the plugin, you can define that inside your user-level or project-level `config.toml`. For example to always use `gpt-5.4-mini` on `high` for a specific project you can add the following to a `.codex/config.toml` file at the root of the directory you started Claude in:
+If you want to change the default reasoning effort or the default model that gets used by the plugin, you can define that inside your user-level or project-level `config.toml`. For example to always use `gpt-5.6-terra` on `high` for a specific project you can add the following to a `.codex/config.toml` file at the root of the directory you started Claude in:
 
 ```toml
-model = "gpt-5.4-mini"
+model = "gpt-5.6-terra"
 model_reasoning_effort = "high"
 ```
+
+`sandbox_mode` is read from the same place. Reviews always run without filesystem sandboxing so the reviewer can run the checks it reasons about, but a write-capable `/codex:rescue` follows whatever you configured here rather than being narrowed by the plugin.
 
 Your configuration will be picked up based on:
 

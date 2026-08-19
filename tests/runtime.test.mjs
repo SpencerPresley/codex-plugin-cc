@@ -1071,7 +1071,7 @@ test("task --background enqueues a detached worker and exposes per-job status", 
   run("git", ["add", "README.md"], { cwd: repo });
   run("git", ["commit", "-m", "init"], { cwd: repo });
 
-  const launched = run("node", [SCRIPT, "task", "--background", "--json", "investigate the failing test"], {
+  const launched = run("node", [SCRIPT, "task", "--background", "--write", "--json", "investigate the failing test"], {
     cwd: repo,
     env: buildEnv(binDir)
   });
@@ -1080,6 +1080,11 @@ test("task --background enqueues a detached worker and exposes per-job status", 
   const launchPayload = JSON.parse(launched.stdout);
   assert.equal(launchPayload.status, "queued");
   assert.match(launchPayload.jobId, /^task-/);
+  // The job log is written line-by-line while the run is in flight, so the
+  // launch has to say where it is; otherwise the only way to follow a
+  // background run is to poll status.
+  assert.equal(typeof launchPayload.logFile, "string");
+  assert.equal(fs.existsSync(launchPayload.logFile), true);
 
   const waitedStatus = run(
     "node",
@@ -2433,75 +2438,6 @@ test("setup and status honor --cwd when reading shared session runtime", () => {
   assert.equal(payload.sessionRuntime.endpoint, "unix:/tmp/fake-broker.sock");
 });
 
-test("job lookup points at another plugin install's store instead of reporting nothing", () => {
-  const repo = makeTempDir();
-  const binDir = makeTempDir();
-  const pluginDataRoot = makeTempDir();
-  const activeDataDir = path.join(pluginDataRoot, "codex-active");
-  const siblingDataDir = path.join(pluginDataRoot, "codex-inline");
-  installFakeCodex(binDir);
-  initGitRepo(repo);
-
-  const env = { ...buildEnv(binDir), CLAUDE_PLUGIN_DATA: activeDataDir };
-  const dirName = resolveStateDirName(repo);
-  const siblingJobsDir = path.join(siblingDataDir, "state", dirName, "jobs");
-  fs.mkdirSync(siblingJobsDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(siblingJobsDir, "review-elsewhere.json"),
-    JSON.stringify({ id: "review-elsewhere", status: "completed" }),
-    "utf8"
-  );
-
-  const result = run("node", [SCRIPT, "status", "review-elsewhere"], { cwd: repo, env });
-
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /No job found for "review-elsewhere"/);
-  assert.match(result.stderr, /another Codex plugin store/);
-  assert.match(result.stderr, new RegExp(siblingDataDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-});
-
-test("result for a job that is still running says so instead of claiming it does not exist", () => {
-  const repo = makeTempDir();
-  const binDir = makeTempDir();
-  installFakeCodex(binDir);
-  initGitRepo(repo);
-
-  const stateDir = resolveStateDir(repo);
-  fs.mkdirSync(path.join(stateDir, "jobs"), { recursive: true });
-  fs.writeFileSync(
-    path.join(stateDir, "state.json"),
-    `${JSON.stringify(
-      {
-        version: 1,
-        config: { stopReviewGate: false },
-        jobs: [
-          {
-            id: "review-inflight",
-            status: "running",
-            title: "Codex Review",
-            createdAt: "2026-08-19T00:00:00.000Z",
-            updatedAt: "2026-08-19T00:01:00.000Z"
-          }
-        ]
-      },
-      null,
-      2
-    )}\n`,
-    "utf8"
-  );
-
-  const result = run("node", [SCRIPT, "result", "review-inflight"], {
-    cwd: repo,
-    env: buildEnv(binDir)
-  });
-
-  assert.notEqual(result.status, 0);
-  // Reporting "no job found" for a job that is plainly running is what makes a
-  // run feel lost; the branch that says otherwise was unreachable.
-  assert.match(result.stderr, /is still running/i);
-  assert.equal(/No finished job found/.test(result.stderr), false);
-});
-
 test("transfer derives the transcript from the Claude session id when the hook never recorded it", () => {
   const home = makeTempDir();
   const repo = path.join(home, "repo");
@@ -2564,88 +2500,31 @@ test("transfer names the expected transcript path when it cannot be derived", ()
   assert.match(result.stderr, /--source/);
 });
 
-test("background launch prints the live log path so the run can be followed", () => {
+test("job lookup points at another plugin install's store instead of reporting nothing", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
+  const pluginDataRoot = makeTempDir();
+  const activeDataDir = path.join(pluginDataRoot, "codex-active");
+  const siblingDataDir = path.join(pluginDataRoot, "codex-inline");
   installFakeCodex(binDir);
   initGitRepo(repo);
 
-  const launched = run("node", [SCRIPT, "task", "--background", "investigate the flaky test"], {
-    cwd: repo,
-    env: buildEnv(binDir)
-  });
-
-  assert.equal(launched.status, 0, launched.stderr);
-  assert.match(launched.stdout, /started in the background as task-/);
-  // Progress is appended to this file as it happens, so it is the only way to
-  // watch a background run without polling status.
-  assert.match(launched.stdout, /Live log: .+\.log/);
-});
-
-test("task --with-session hands Codex the Claude transcript instead of a bare prompt", () => {
-  const home = makeTempDir();
-  const repo = path.join(home, "repo");
-  const binDir = makeTempDir();
-  const sessionId = "sess-handoff";
-  fs.mkdirSync(repo, { recursive: true });
-  const projectDir = path.join(home, ".claude", "projects", "-repo");
-  fs.mkdirSync(projectDir, { recursive: true });
-  const sourcePath = path.join(projectDir, `${sessionId}.jsonl`);
-  installFakeCodex(binDir);
-  initGitRepo(repo);
-
+  const env = { ...buildEnv(binDir), CLAUDE_PLUGIN_DATA: activeDataDir };
+  const dirName = resolveStateDirName(repo);
+  const siblingJobsDir = path.join(siblingDataDir, "state", dirName, "jobs");
+  fs.mkdirSync(siblingJobsDir, { recursive: true });
   fs.writeFileSync(
-    sourcePath,
-    [
-      { type: "user", cwd: repo, message: { role: "user", content: "The integration test is flaky" } },
-      { type: "assistant", cwd: repo, message: { role: "assistant", content: "Ruled out the retry wrapper" } }
-    ]
-      .map((entry) => JSON.stringify(entry))
-      .join("\n") + "\n",
+    path.join(siblingJobsDir, "review-elsewhere.json"),
+    JSON.stringify({ id: "review-elsewhere", status: "completed" }),
     "utf8"
   );
 
-  const env = {
-    ...buildEnv(binDir),
-    HOME: home,
-    CODEX_HOME: path.join(home, ".codex"),
-    CODEX_COMPANION_TRANSCRIPT_PATH: sourcePath
-  };
-
-  const result = run("node", [SCRIPT, "task", "--write", "--with-session", "fix the flaky test"], {
-    cwd: repo,
-    env
-  });
-
-  assert.equal(result.status, 0, result.stderr);
-  const fakeState = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
-  // The task runs on the thread the transcript was imported into, so Codex
-  // starts from what Claude already established.
-  assert.equal(fakeState.lastExternalAgentImport.sourcePath, fs.realpathSync(sourcePath));
-  assert.equal(fakeState.lastThreadResume.threadId, "thr_1");
-  assert.equal(fakeState.lastTurnStart.threadId, "thr_1");
-  assert.deepEqual(
-    fakeState.threads[0].visibleMessages.map((message) => message.text),
-    ["The integration test is flaky", "Ruled out the retry wrapper"]
-  );
-  // It is still a first turn, so the workspace contract goes with it.
-  assert.match(fakeState.lastTurnStart.prompt, /fix the flaky test/);
-  assert.match(fakeState.lastTurnStart.prompt, /<task_workspace_policy>/);
-});
-
-test("task rejects combining --with-session with a resumed Codex thread", () => {
-  const repo = makeTempDir();
-  const binDir = makeTempDir();
-  installFakeCodex(binDir);
-  initGitRepo(repo);
-
-  const result = run("node", [SCRIPT, "task", "--with-session", "--resume-last", "keep going"], {
-    cwd: repo,
-    env: buildEnv(binDir)
-  });
+  const result = run("node", [SCRIPT, "status", "review-elsewhere"], { cwd: repo, env });
 
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /Choose either --resume\/--resume-last or --with-session/);
+  assert.match(result.stderr, /No job found for "review-elsewhere"/);
+  assert.match(result.stderr, /another Codex plugin store/);
+  assert.match(result.stderr, new RegExp(siblingDataDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
 test("stop hook gives the gate reviewer full reach and the repository contract", () => {
@@ -2712,6 +2591,24 @@ test("stop hook allows the stop when the gate itself fails instead of trapping t
   assert.equal(result.stdout.trim(), "");
   assert.match(result.stderr, /could not evaluate this turn/);
   assert.match(result.stderr, /\/codex:review --wait/);
+});
+
+test("background launch prints the live log path so the run can be followed", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const launched = run("node", [SCRIPT, "task", "--background", "investigate the flaky test"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.equal(launched.status, 0, launched.stderr);
+  assert.match(launched.stdout, /started in the background as task-/);
+  // Progress is appended to this file as it happens, so it is the only way to
+  // watch a background run without polling status.
+  assert.match(launched.stdout, /Live log: .+\.log/);
 });
 
 test("an interrupted adversarial review reports no verdict instead of its last interim message", () => {
@@ -2797,4 +2694,112 @@ test("subagent labels survive notifications that arrive before the turn is ackno
   // line for that subagent degrades to a raw thread id.
   assert.match(log, /Subagent design-challenger:/);
   assert.equal(/Subagent thr_\d+/.test(log), false);
+});
+
+test("task --with-session hands Codex the Claude transcript instead of a bare prompt", () => {
+  const home = makeTempDir();
+  const repo = path.join(home, "repo");
+  const binDir = makeTempDir();
+  const sessionId = "sess-handoff";
+  fs.mkdirSync(repo, { recursive: true });
+  const projectDir = path.join(home, ".claude", "projects", "-repo");
+  fs.mkdirSync(projectDir, { recursive: true });
+  const sourcePath = path.join(projectDir, `${sessionId}.jsonl`);
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  fs.writeFileSync(
+    sourcePath,
+    [
+      { type: "user", cwd: repo, message: { role: "user", content: "The integration test is flaky" } },
+      { type: "assistant", cwd: repo, message: { role: "assistant", content: "Ruled out the retry wrapper" } }
+    ]
+      .map((entry) => JSON.stringify(entry))
+      .join("\n") + "\n",
+    "utf8"
+  );
+
+  const env = {
+    ...buildEnv(binDir),
+    HOME: home,
+    CODEX_HOME: path.join(home, ".codex"),
+    CODEX_COMPANION_TRANSCRIPT_PATH: sourcePath
+  };
+
+  const result = run("node", [SCRIPT, "task", "--write", "--with-session", "fix the flaky test"], {
+    cwd: repo,
+    env
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const fakeState = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  // The task runs on the thread the transcript was imported into, so Codex
+  // starts from what Claude already established.
+  assert.equal(fakeState.lastExternalAgentImport.sourcePath, fs.realpathSync(sourcePath));
+  assert.equal(fakeState.lastThreadResume.threadId, "thr_1");
+  assert.equal(fakeState.lastTurnStart.threadId, "thr_1");
+  assert.deepEqual(
+    fakeState.threads[0].visibleMessages.map((message) => message.text),
+    ["The integration test is flaky", "Ruled out the retry wrapper"]
+  );
+  // It is still a first turn, so the workspace contract goes with it.
+  assert.match(fakeState.lastTurnStart.prompt, /fix the flaky test/);
+  assert.match(fakeState.lastTurnStart.prompt, /<task_workspace_policy>/);
+});
+
+test("task rejects combining --with-session with a resumed Codex thread", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const result = run("node", [SCRIPT, "task", "--with-session", "--resume-last", "keep going"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Choose either --resume\/--resume-last or --with-session/);
+});
+
+test("result for a job that is still running says so instead of claiming it does not exist", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const stateDir = resolveStateDir(repo);
+  fs.mkdirSync(path.join(stateDir, "jobs"), { recursive: true });
+  fs.writeFileSync(
+    path.join(stateDir, "state.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        config: { stopReviewGate: false },
+        jobs: [
+          {
+            id: "review-inflight",
+            status: "running",
+            title: "Codex Review",
+            createdAt: "2026-08-19T00:00:00.000Z",
+            updatedAt: "2026-08-19T00:01:00.000Z"
+          }
+        ]
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+
+  const result = run("node", [SCRIPT, "result", "review-inflight"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.notEqual(result.status, 0);
+  // Reporting "no job found" for a job that is plainly running is what makes a
+  // run feel lost; the branch that says otherwise was unreachable.
+  assert.match(result.stderr, /is still running/i);
+  assert.equal(/No finished job found/.test(result.stderr), false);
 });
