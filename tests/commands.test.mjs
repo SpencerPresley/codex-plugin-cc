@@ -188,32 +188,71 @@ test("rescue command absorbs continue semantics", () => {
   assert.match(readme, /### `\/codex:cancel`/);
 });
 
-test("transfer, result, and cancel commands are exposed as deterministic runtime entrypoints", () => {
+test("transfer and cancel stay user-only while status and result are model-invokable", () => {
   const transfer = read("commands/transfer.md");
   const result = read("commands/result.md");
+  const status = read("commands/status.md");
   const cancel = read("commands/cancel.md");
   const resultHandling = read("skills/codex-result-handling/SKILL.md");
 
+  // Cancel throws away in-flight work and transfer hands the user's own session
+  // to another agent: both stay the user's call.
   assert.match(transfer, /disable-model-invocation:\s*true/);
+  assert.match(cancel, /disable-model-invocation:\s*true/);
+
+  // Claude can launch a background job, so it must be able to follow that job to
+  // completion instead of handing the user a job id and going quiet.
+  assert.equal(/disable-model-invocation/.test(status), false);
+  assert.equal(/disable-model-invocation/.test(result), false);
+  assert.match(status, /--wait --timeout-ms/);
+  assert.match(status, /live log path/i);
+
   assert.match(transfer, /codex-companion\.mjs" transfer "\$ARGUMENTS"/);
   assert.match(transfer, /codex resume <session-id>/);
-  assert.match(result, /disable-model-invocation:\s*true/);
   assert.match(result, /codex-companion\.mjs" result "\$ARGUMENTS"/);
-  assert.match(cancel, /disable-model-invocation:\s*true/);
+  assert.match(status, /codex-companion\.mjs" status "\$ARGUMENTS"/);
   assert.match(cancel, /codex-companion\.mjs" cancel "\$ARGUMENTS"/);
   assert.match(resultHandling, /do not turn a failed or incomplete Codex run into a Claude-side implementation attempt/i);
   assert.match(resultHandling, /if Codex was never successfully invoked, do not generate a substitute answer at all/i);
 });
 
+test("review results can be contested by Claude without being edited", () => {
+  const resultHandling = read("skills/codex-result-handling/SKILL.md");
+  const usingCodex = read("skills/using-codex/SKILL.md");
+  const review = read("commands/review.md");
+  const adversarial = read("commands/adversarial-review.md");
+
+  for (const source of [review, adversarial]) {
+    // The verbatim block still comes first and untouched; the assessment is
+    // additive, not a rewrite.
+    assert.match(source, /Return the command stdout verbatim, exactly as-is/);
+    assert.match(source, /Claude's assessment/);
+    assert.match(source, /never before it and never interleaved/i);
+    assert.match(source, /Still do not edit anything/i);
+  }
+
+  assert.match(resultHandling, /Claude's assessment/);
+  assert.match(resultHandling, /Attach the evidence/i);
+  assert.match(usingCodex, /Assessing the review/);
+  // Auto-applying fixes remains forbidden even though commentary is allowed.
+  assert.match(resultHandling, /Auto-applying fixes from a review is strictly forbidden/);
+});
+
 test("internal docs use task terminology for rescue runs", () => {
   const runtimeSkill = read("skills/codex-cli-runtime/SKILL.md");
-  const promptingSkill = read("skills/gpt-5-4-prompting/SKILL.md");
-  const promptRecipes = read("skills/gpt-5-4-prompting/references/codex-prompt-recipes.md");
+  const promptingSkill = read("skills/codex-prompting/SKILL.md");
+  const promptRecipes = read("skills/codex-prompting/references/codex-prompt-recipes.md");
 
   assert.match(runtimeSkill, /codex-companion\.mjs" task "<raw arguments>"/);
   assert.match(runtimeSkill, /Use `task` for every rescue request/i);
   assert.match(runtimeSkill, /task --resume-last/i);
-  assert.match(promptingSkill, /Use `task` when the task is diagnosis/i);
+  assert.match(promptingSkill, /Hand over what you already know/i);
+  assert.match(promptingSkill, /task --with-session/);
+  // The guidance must track the model Codex actually routes to, not the one it
+  // shipped against.
+  assert.match(promptingSkill, /GPT-5\.6/);
+  assert.match(promptingSkill, /Reasoning effort defaults to `medium` when unset/i);
+  assert.equal(/GPT-5\.4|GPT-5\.5/.test(promptingSkill), false);
   assert.match(promptRecipes, /Codex task prompts/i);
   assert.match(promptRecipes, /Use these as starting templates for Codex task prompts/i);
   assert.match(promptRecipes, /## Diagnosis/);

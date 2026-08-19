@@ -1,7 +1,6 @@
 ---
 description: Show active and recent Codex jobs for this repository, including review-gate status
 argument-hint: '[job-id] [--wait] [--timeout-ms <ms>] [--all]'
-disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
 
@@ -15,3 +14,7 @@ If the user did not pass a job ID:
 If the user did pass a job ID:
 - Present the full command output to the user.
 - Do not summarize or condense it.
+
+If you launched the job yourself:
+- Wait for it with `/codex:status <id> --wait --timeout-ms <ms>` instead of polling repeatedly. One blocking call is cheaper and reports sooner than a poll loop.
+- The status output includes the job's live log path. Read that file if you need to see what Codex is doing while the job is still running.
