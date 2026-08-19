@@ -974,6 +974,13 @@ test("task can finish after subagent work even if the parent turn/completed even
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "Handled the requested task.\nTask prompt accepted.\n");
+  // A run that ends through inferred completion (final answer seen, no
+  // outstanding collaboration) is a real completion. Recording it as "failed"
+  // made every successful multi-agent run look broken in /codex:status.
+  const stateDir = resolveStateDir(repo);
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  assert.equal(state.jobs[0].status, "completed");
+  assert.equal(state.jobs[0].phase, "done");
 });
 
 test("task using the shared broker still completes when Codex spawns subagents", () => {
@@ -2702,4 +2709,64 @@ test("stop hook allows the stop when the gate itself fails instead of trapping t
   assert.equal(result.stdout.trim(), "");
   assert.match(result.stderr, /could not evaluate this turn/);
   assert.match(result.stderr, /\/codex:review --wait/);
+});
+
+test("an interrupted adversarial review reports no verdict instead of its last interim message", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "review-interrupted");
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "app.js"), "export const noop = () => {};\n");
+
+  const result = run("node", [SCRIPT, "adversarial-review", "--json"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  const payload = JSON.parse(result.stdout);
+  // The interim message parses as a complete review object and says "approve".
+  // It must not be promoted to a verdict just because it was the last thing said.
+  assert.equal(payload.result, null);
+  assert.equal(payload.interrupted, true);
+  assert.match(payload.parseError, /did not finish \(turn status: failed\)/);
+
+  const rendered = run("node", [SCRIPT, "adversarial-review"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.match(rendered.stdout, /did not finish, so it has no verdict/);
+  assert.match(rendered.stdout, /Last interim message \(not a verdict\)/);
+  assert.equal(/^Verdict: approve/m.test(rendered.stdout), false);
+  // The interim assessments are kept rather than discarded: the drift across
+  // them is the only visibility into a long run.
+  assert.equal(payload.assessments.length, 1);
+  assert.match(payload.assessments[0].text, /Still tracing the retry path/);
+  assert.equal(payload.assessments[0].phase, "analysis");
+  assert.match(payload.assessments[0].at, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("a completed adversarial review keeps its verdict and records the assessment timeline", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "app.js"), "export const noop = () => {};\n");
+
+  const result = run("node", [SCRIPT, "adversarial-review", "--json"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.interrupted, false);
+  assert.equal(typeof payload.result.verdict, "string");
+  assert.equal(payload.assessments.length >= 1, true);
+  assert.equal(payload.assessments.at(-1).text, payload.rawOutput);
 });

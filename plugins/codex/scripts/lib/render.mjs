@@ -213,13 +213,22 @@ export function renderReviewResult(parsedResult, meta) {
     const lines = [
       `# Codex ${meta.reviewLabel}`,
       "",
-      "Codex did not return valid structured JSON.",
+      parsedResult.interrupted
+        ? "This review did not finish, so it has no verdict."
+        : "Codex did not return valid structured JSON.",
       "",
-      `- Parse error: ${parsedResult.parseError}`
+      `- ${parsedResult.interrupted ? "Reason" : "Parse error"}: ${parsedResult.parseError}`
     ];
 
     if (parsedResult.rawOutput) {
-      lines.push("", "Raw final message:", "", "```text", parsedResult.rawOutput, "```");
+      lines.push(
+        "",
+        parsedResult.interrupted ? "Last interim message (not a verdict):" : "Raw final message:",
+        "",
+        "```text",
+        parsedResult.rawOutput,
+        "```"
+      );
     }
 
     appendReasoningSection(lines, meta.reasoningSummary ?? parsedResult.reasoningSummary);
@@ -295,7 +304,9 @@ export function renderNativeReviewResult(result, meta) {
     ""
   ];
 
-  if (stdout) {
+  if (stdout && result.status !== 0) {
+    lines.push("This review did not finish, so the text below is not a final result.", "", stdout);
+  } else if (stdout) {
     lines.push(stdout);
   } else if (result.status === 0) {
     lines.push("Codex review completed without any stdout output.");

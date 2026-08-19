@@ -597,6 +597,33 @@ rl.on("line", (line) => {
           }
         ];
 
+	        if (BEHAVIOR === "review-interrupted") {
+	          // The output schema forces a verdict onto every assistant message, so
+	          // a mid-run status update is itself a schema-valid review object.
+	          // Emit one, then end the turn without completing it.
+	          send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
+	          send({
+	            method: "item/completed",
+	            params: {
+	              threadId: thread.id,
+	              turnId,
+	              item: {
+	                type: "agentMessage",
+	                id: "msg_progress_" + turnId,
+	                text: JSON.stringify({
+	                  verdict: "approve",
+	                  summary: "Still tracing the retry path; no conclusion yet.",
+	                  findings: [],
+	                  next_steps: []
+	                }),
+	                phase: "analysis"
+	              }
+	            }
+	          });
+	          send({ method: "turn/completed", params: { threadId: thread.id, turn: buildTurn(turnId, "failed") } });
+	          break;
+	        }
+
 	        if (BEHAVIOR === "interruptible-slow-task") {
 	          send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
 	          const timer = setTimeout(() => {

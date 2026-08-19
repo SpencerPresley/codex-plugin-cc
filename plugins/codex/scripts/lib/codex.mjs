@@ -359,6 +359,26 @@ function clearCompletionTimer(state) {
   }
 }
 
+/**
+ * The reviewer's interim messages, oldest first.
+ *
+ * A long review emits several assessments before it finishes, and the verdict
+ * drifting across them (approve -> needs-attention) is a real signal about where
+ * the reviewer's confidence is heading. The runtime used to keep only the last
+ * message and drop the rest, which both lost that signal and made an
+ * interrupted run indistinguishable from a finished one.
+ */
+function collectAssessments(state) {
+  return state.messages
+    .filter(
+      (message) =>
+        message.lifecycle === "completed" &&
+        message.text &&
+        (!message.threadId || message.threadId === state.rootThreadId || message.threadId === state.threadId)
+    )
+    .map((message) => ({ at: message.at, phase: message.phase, text: message.text }));
+}
+
 function completeTurn(state, turn = null, options = {}) {
   if (state.completed) {
     return;
@@ -366,6 +386,10 @@ function completeTurn(state, turn = null, options = {}) {
 
   clearCompletionTimer(state);
   state.completed = true;
+
+  if (!turn && options.inferred) {
+    state.finalTurn = { id: state.turnId, status: "completed", inferred: true };
+  }
 
   if (turn) {
     state.finalTurn = turn;
@@ -438,6 +462,8 @@ function recordItem(state, item, lifecycle, threadId = null) {
     state.messages.push({
       lifecycle,
       phase: item.phase ?? null,
+      threadId: threadId ?? state.threadId,
+      at: new Date().toISOString(),
       text: item.text ?? ""
     });
     if (item.text) {
@@ -1063,6 +1089,7 @@ export async function runAppServerReview(cwd, options = {}) {
       sourceThreadId,
       turnId: turnState.turnId,
       reviewText: turnState.reviewText,
+      assessments: collectAssessments(turnState),
       reasoningSummary: turnState.reasoningSummary,
       turn: turnState.finalTurn,
       error: turnState.error,
@@ -1164,6 +1191,7 @@ export async function runAppServerTurn(cwd, options = {}) {
       threadId,
       turnId: turnState.turnId,
       finalMessage: turnState.lastAgentMessage,
+      assessments: collectAssessments(turnState),
       reasoningSummary: turnState.reasoningSummary,
       turn: turnState.finalTurn,
       error: turnState.error,

@@ -461,10 +461,28 @@ async function executeReviewRun(request) {
     outputSchema: readOutputSchema(REVIEW_SCHEMA),
     onProgress: request.onProgress
   });
-  const parsed = parseStructuredOutput(result.finalMessage, {
-    status: result.status,
-    failureMessage: result.error?.message ?? result.stderr
-  });
+  // Only a completed turn produces a verdict.
+  //
+  // The output schema requires `verdict` on every assistant message, so the
+  // reviewer's mid-run status updates are themselves schema-valid review
+  // objects. Taking the last message from a turn that never completed would
+  // render one of those as a finished result -- reporting "approve" for a review
+  // that was interrupted before it reached a conclusion.
+  const parsed =
+    result.status === 0
+      ? parseStructuredOutput(result.finalMessage, {
+          status: result.status,
+          failureMessage: result.error?.message ?? result.stderr
+        })
+      : {
+          parsed: null,
+          interrupted: true,
+          parseError:
+            result.error?.message ??
+            `The review did not finish (turn status: ${result.turn?.status ?? "unknown"}). The text below is the reviewer's last interim message, not a verdict.`,
+          rawOutput: result.finalMessage ?? "",
+          status: result.status
+        };
   const payload = {
     review: reviewName,
     target,
@@ -483,6 +501,8 @@ async function executeReviewRun(request) {
     result: parsed.parsed,
     rawOutput: parsed.rawOutput,
     parseError: parsed.parseError,
+    interrupted: Boolean(parsed.interrupted),
+    assessments: result.assessments ?? [],
     reasoningSummary: result.reasoningSummary
   };
 
