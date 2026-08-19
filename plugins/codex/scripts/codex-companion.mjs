@@ -570,7 +570,7 @@ async function executeTaskRun(request) {
       throw new Error("No previous Codex task thread was found for this repository.");
     }
     resumeThreadId = latestThread.id;
-  } else if (request.withSession) {
+  } else if (request.withSession || request.sessionSource) {
     // Hand over what Claude already knows instead of making Codex rediscover it.
     // The plugin can already import a Claude transcript into a Codex thread
     // (`/codex:transfer`); starting the task on that thread means the delegate
@@ -970,7 +970,11 @@ async function handleTask(argv) {
       sandbox,
       resumeLast,
       withSession,
-      sessionSource: options["session-source"] ?? null,
+      // Resolve the transcript before detaching so an unresolvable session
+      // fails at the prompt instead of inside a background worker.
+      sessionSource: withSession
+        ? resolveClaudeSessionPath(cwd, { source: options["session-source"] })
+        : options["session-source"] ?? null,
       noWorkspacePolicy,
       jobId: job.id
     });

@@ -2895,3 +2895,71 @@ test("--no-workspace-policy is refused from the command line", () => {
   // as a plain flag.
   assert.match(result.stderr, /internal to the stop-time review gate/);
 });
+
+test("--with-session resolves the transcript before detaching a background job", () => {
+  const home = makeTempDir();
+  const repo = path.join(home, "repo");
+  const binDir = makeTempDir();
+  fs.mkdirSync(repo, { recursive: true });
+  fs.mkdirSync(path.join(home, ".claude", "projects"), { recursive: true });
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const result = run("node", [SCRIPT, "task", "--background", "--with-session", "fix it"], {
+    cwd: repo,
+    env: { ...buildEnv(binDir), HOME: home, CODEX_HOME: path.join(home, ".codex"), CLAUDE_CODE_SESSION_ID: "sess-none" }
+  });
+
+  // Failing at launch beats failing minutes later inside a detached worker,
+  // where the only trace is a log nobody is watching.
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Could not identify the current Claude transcript/);
+});
+
+test("status omits a log path once the job cap has deleted the file", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const stateDir = resolveStateDir(repo);
+  fs.mkdirSync(path.join(stateDir, "jobs"), { recursive: true });
+  const livingLog = path.join(stateDir, "jobs", "review-live.log");
+  fs.writeFileSync(livingLog, "progress\n", "utf8");
+  fs.writeFileSync(
+    path.join(stateDir, "state.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        config: { stopReviewGate: false },
+        jobs: [
+          {
+            id: "review-live",
+            status: "completed",
+            title: "Codex Review",
+            logFile: livingLog,
+            createdAt: "2026-08-19T00:00:00.000Z",
+            updatedAt: "2026-08-19T00:02:00.000Z"
+          },
+          {
+            id: "review-pruned",
+            status: "completed",
+            title: "Codex Review",
+            logFile: path.join(stateDir, "jobs", "review-pruned.log"),
+            createdAt: "2026-08-19T00:00:00.000Z",
+            updatedAt: "2026-08-19T00:01:00.000Z"
+          }
+        ]
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+
+  const live = run("node", [SCRIPT, "status", "review-live"], { cwd: repo, env: buildEnv(binDir) });
+  const pruned = run("node", [SCRIPT, "status", "review-pruned"], { cwd: repo, env: buildEnv(binDir) });
+
+  assert.match(live.stdout, /Log: .*review-live\.log/);
+  assert.equal(/Log:/.test(pruned.stdout), false);
+});

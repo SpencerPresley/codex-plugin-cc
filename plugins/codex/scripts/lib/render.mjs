@@ -1,3 +1,5 @@
+import fs from "node:fs";
+
 function severityRank(severity) {
   switch (severity) {
     case "critical":
@@ -142,7 +144,7 @@ function pushJobDetails(lines, job, options = {}) {
   if (resumeCommand) {
     lines.push(`  Resume in Codex: ${resumeCommand}`);
   }
-  if (job.logFile && options.showLog) {
+  if (job.logFile && options.showLog && fs.existsSync(job.logFile)) {
     lines.push(`  Log: ${job.logFile}`);
   }
   if ((job.status === "queued" || job.status === "running") && options.showCancelHint) {
