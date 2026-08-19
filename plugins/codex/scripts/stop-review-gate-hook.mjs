@@ -52,7 +52,8 @@ function buildStopReviewPrompt(input = {}) {
     ? ["Previous Claude response:", lastAssistantMessage].join("\n")
     : "";
   return interpolateTemplate(template, {
-    CLAUDE_RESPONSE_BLOCK: claudeResponseBlock
+    CLAUDE_RESPONSE_BLOCK: claudeResponseBlock,
+    REVIEW_WORKSPACE_POLICY: loadPromptTemplate(ROOT_DIR, "review-workspace-policy").trim()
   });
 }
 
@@ -66,13 +67,23 @@ function buildSetupNote(cwd) {
   return `Codex is not set up for the review gate.${detail} Run /codex:setup.`;
 }
 
+/**
+ * The gate blocks on a verdict, never on its own plumbing.
+ *
+ * `unavailable` means the review did not produce an answer — it timed out,
+ * crashed, or returned something unparseable. Blocking there traps the session
+ * because Codex broke, which punishes the model for the harness's failure and
+ * gives the user no way forward except bypassing the gate entirely. Those cases
+ * warn loudly on stderr and allow the stop.
+ */
 function parseStopReviewOutput(rawOutput) {
   const text = String(rawOutput ?? "").trim();
   if (!text) {
     return {
       ok: false,
+      unavailable: true,
       reason:
-        "The stop-time Codex review task returned no final output. Run /codex:review --wait manually or bypass the gate."
+        "The stop-time Codex review task returned no final output, so the gate could not evaluate this turn. Run /codex:review --wait manually if you want a review."
     };
   }
 
@@ -90,8 +101,9 @@ function parseStopReviewOutput(rawOutput) {
 
   return {
     ok: false,
+    unavailable: true,
     reason:
-      "The stop-time Codex review task returned an unexpected answer. Run /codex:review --wait manually or bypass the gate."
+      "The stop-time Codex review task returned an unexpected answer, so the gate could not evaluate this turn. Run /codex:review --wait manually if you want a review."
   };
 }
 
@@ -102,18 +114,26 @@ function runStopReview(cwd, input = {}) {
     ...process.env,
     ...(input.session_id ? { [SESSION_ID_ENV]: input.session_id } : {})
   };
-  const result = spawnSync(process.execPath, [scriptPath, "task", "--json", prompt], {
-    cwd,
-    env: childEnv,
-    encoding: "utf8",
-    timeout: STOP_REVIEW_TIMEOUT_MS
-  });
+  // The gate is a review: it gets full reach, but its prompt already carries the
+  // repository-preserving contract, so it must not also receive the task
+  // contract that authorizes changes.
+  const result = spawnSync(
+    process.execPath,
+    [scriptPath, "task", "--json", "--sandbox", "danger-full-access", "--no-workspace-policy", prompt],
+    {
+      cwd,
+      env: childEnv,
+      encoding: "utf8",
+      timeout: STOP_REVIEW_TIMEOUT_MS
+    }
+  );
 
   if (result.error?.code === "ETIMEDOUT") {
     return {
       ok: false,
+      unavailable: true,
       reason:
-        "The stop-time Codex review task timed out after 15 minutes. Run /codex:review --wait manually or bypass the gate."
+        "The stop-time Codex review task timed out after 15 minutes, so the gate could not evaluate this turn. Run /codex:review --wait manually if you want a review."
     };
   }
 
@@ -121,9 +141,10 @@ function runStopReview(cwd, input = {}) {
     const detail = String(result.stderr || result.stdout || "").trim();
     return {
       ok: false,
+      unavailable: true,
       reason: detail
-        ? `The stop-time Codex review task failed: ${detail}`
-        : "The stop-time Codex review task failed. Run /codex:review --wait manually or bypass the gate."
+        ? `The stop-time Codex review task failed, so the gate could not evaluate this turn: ${detail}`
+        : "The stop-time Codex review task failed, so the gate could not evaluate this turn. Run /codex:review --wait manually if you want a review."
     };
   }
 
@@ -133,8 +154,9 @@ function runStopReview(cwd, input = {}) {
   } catch {
     return {
       ok: false,
+      unavailable: true,
       reason:
-        "The stop-time Codex review task returned invalid JSON. Run /codex:review --wait manually or bypass the gate."
+        "The stop-time Codex review task returned invalid JSON, so the gate could not evaluate this turn. Run /codex:review --wait manually if you want a review."
     };
   }
 }
@@ -164,6 +186,11 @@ function main() {
   }
 
   const review = runStopReview(cwd, input);
+  if (review.unavailable) {
+    logNote(review.reason);
+    logNote(runningTaskNote);
+    return;
+  }
   if (!review.ok) {
     emitDecision({
       decision: "block",

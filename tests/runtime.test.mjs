@@ -2637,3 +2637,69 @@ test("task rejects combining --with-session with a resumed Codex thread", () => 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Choose either --resume\/--resume-last or --with-session/);
 });
+
+test("stop hook gives the gate reviewer full reach and the repository contract", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "adversarial-clean");
+  initGitRepo(repo);
+
+  const setup = run("node", [SCRIPT, "setup", "--enable-review-gate", "--json"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(setup.status, 0, setup.stderr);
+
+  const allowed = run("node", [STOP_HOOK], {
+    cwd: repo,
+    env: buildEnv(binDir),
+    input: JSON.stringify({
+      cwd: repo,
+      session_id: "sess-gate-reach",
+      last_assistant_message: "I refactored the retry logic."
+    })
+  });
+
+  assert.equal(allowed.status, 0, allowed.stderr);
+  assert.equal(allowed.stdout.trim(), "");
+  const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  // The gate is a review: it must be able to run the tests it is asked to reason
+  // about, under the same repository-preserving contract as /codex:review.
+  assert.equal(state.lastThreadStart.sandbox, "danger-full-access");
+  assert.match(state.lastTurnStart.prompt, /<review_workspace_policy>/);
+  assert.match(state.lastTurnStart.prompt, /incidental/i);
+  // It must not also pick up the task contract, which authorizes changes: the
+  // gate would then be holding two contradictory instructions about whether it
+  // may modify the repository.
+  assert.equal(/<task_workspace_policy>/.test(state.lastTurnStart.prompt), false);
+});
+
+test("stop hook allows the stop when the gate itself fails instead of trapping the session", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "stop-gate-garbage");
+  initGitRepo(repo);
+
+  const setup = run("node", [SCRIPT, "setup", "--enable-review-gate", "--json"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(setup.status, 0, setup.stderr);
+
+  const result = run("node", [STOP_HOOK], {
+    cwd: repo,
+    env: buildEnv(binDir),
+    input: JSON.stringify({
+      cwd: repo,
+      session_id: "sess-gate-broken",
+      last_assistant_message: "I refactored the retry logic."
+    })
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  // No decision payload at all: a reviewer that could not answer must not be
+  // able to hold the session hostage.
+  assert.equal(result.stdout.trim(), "");
+  assert.match(result.stderr, /could not evaluate this turn/);
+  assert.match(result.stderr, /\/codex:review --wait/);
+});

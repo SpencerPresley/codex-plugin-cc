@@ -241,6 +241,9 @@ function taskPayload(prompt, resume) {
     if (BEHAVIOR === "adversarial-clean") {
       return "ALLOW: No blocking issues found in the previous turn.";
     }
+    if (BEHAVIOR === "stop-gate-garbage") {
+      return "I could not finish the review because the toolchain fell over.";
+    }
     return "BLOCK: Missing empty-state guard in src/app.js:4-6.";
   }
 
