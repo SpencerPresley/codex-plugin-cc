@@ -26,7 +26,7 @@ function defaultState() {
   };
 }
 
-export function resolveStateDir(cwd) {
+export function resolveStateDirName(cwd) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   let canonicalWorkspaceRoot = workspaceRoot;
   try {
@@ -38,9 +38,62 @@ export function resolveStateDir(cwd) {
   const slugSource = path.basename(workspaceRoot) || "workspace";
   const slug = slugSource.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "workspace";
   const hash = createHash("sha256").update(canonicalWorkspaceRoot).digest("hex").slice(0, 16);
-  const pluginDataDir = process.env[PLUGIN_DATA_ENV];
-  const stateRoot = pluginDataDir ? path.join(pluginDataDir, "state") : FALLBACK_STATE_ROOT_DIR;
-  return path.join(stateRoot, `${slug}-${hash}`);
+  return `${slug}-${hash}`;
+}
+
+function resolveStateRoot(env = process.env) {
+  const pluginDataDir = env[PLUGIN_DATA_ENV];
+  return pluginDataDir ? path.join(pluginDataDir, "state") : FALLBACK_STATE_ROOT_DIR;
+}
+
+export function resolveStateDir(cwd) {
+  return path.join(resolveStateRoot(), resolveStateDirName(cwd));
+}
+
+/**
+ * Every other place this workspace's jobs could be stored.
+ *
+ * The active store is rooted at `CLAUDE_PLUGIN_DATA`, which Claude Code sets per
+ * plugin *identity* (`codex@spencer-codex` vs an inline/local install) and which
+ * reaches the companion only via the SessionStart hook writing to
+ * `CLAUDE_ENV_FILE`. So the same repository legitimately ends up with more than
+ * one store: one per plugin install, plus the temp-dir fallback used whenever
+ * the variable never arrived. A job written under one root is invisible to a
+ * command resolving another, which reads to the user as "my review vanished".
+ * We cannot merge the stores safely, but we can find them and say where the job
+ * actually lives.
+ */
+export function listAlternateStateDirs(cwd, env = process.env) {
+  const dirName = resolveStateDirName(cwd);
+  const activeDir = path.join(resolveStateRoot(env), dirName);
+  const candidates = new Set();
+
+  const pluginDataDir = env[PLUGIN_DATA_ENV];
+  if (pluginDataDir) {
+    // Sibling plugin-data roots: <...>/plugins/data/<plugin-identity>/state/<dir>
+    const dataParent = path.dirname(pluginDataDir);
+    let siblings = [];
+    try {
+      siblings = fs.readdirSync(dataParent, { withFileTypes: true });
+    } catch {
+      siblings = [];
+    }
+    for (const entry of siblings) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      candidates.add(path.join(dataParent, entry.name, "state", dirName));
+    }
+  }
+
+  candidates.add(path.join(FALLBACK_STATE_ROOT_DIR, dirName));
+
+  return [...candidates].filter((candidate) => {
+    if (path.resolve(candidate) === path.resolve(activeDir)) {
+      return false;
+    }
+    return fs.existsSync(path.join(candidate, JOBS_DIR_NAME));
+  });
 }
 
 export function resolveStateFile(cwd) {
@@ -188,4 +241,29 @@ export function resolveJobLogFile(cwd, jobId) {
 export function resolveJobFile(cwd, jobId) {
   ensureStateDir(cwd);
   return path.join(resolveJobsDir(cwd), `${jobId}.json`);
+}
+
+/**
+ * Look for a job id (or id prefix) in the stores this process is not using.
+ * Returns `[{ dir, jobIds }]` so callers can tell the user where the job went
+ * instead of reporting a bare "not found".
+ */
+export function findJobsInAlternateStateDirs(cwd, reference = "", env = process.env) {
+  const matches = [];
+  for (const dir of listAlternateStateDirs(cwd, env)) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(path.join(dir, JOBS_DIR_NAME));
+    } catch {
+      continue;
+    }
+    const jobIds = entries
+      .filter((entry) => entry.endsWith(".json"))
+      .map((entry) => entry.slice(0, -".json".length))
+      .filter((jobId) => !reference || jobId === reference || jobId.startsWith(reference));
+    if (jobIds.length > 0) {
+      matches.push({ dir, jobIds });
+    }
+  }
+  return matches;
 }

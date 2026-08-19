@@ -10,7 +10,7 @@ import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
 import { cleanupTempDirs, initGitRepo, makeTempDir, run } from "./helpers.mjs";
 import { loadBrokerSession, saveBrokerSession } from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
 import { parseBrokerEndpoint } from "../plugins/codex/scripts/lib/broker-endpoint.mjs";
-import { resolveStateDir } from "../plugins/codex/scripts/lib/state.mjs";
+import { resolveStateDir, resolveStateDirName } from "../plugins/codex/scripts/lib/state.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PLUGIN_ROOT = path.join(ROOT, "plugins", "codex");
@@ -2358,4 +2358,73 @@ test("setup and status honor --cwd when reading shared session runtime", () => {
   const payload = JSON.parse(setup.stdout);
   assert.equal(payload.sessionRuntime.mode, "shared");
   assert.equal(payload.sessionRuntime.endpoint, "unix:/tmp/fake-broker.sock");
+});
+
+test("job lookup points at another plugin install's store instead of reporting nothing", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  const pluginDataRoot = makeTempDir();
+  const activeDataDir = path.join(pluginDataRoot, "codex-active");
+  const siblingDataDir = path.join(pluginDataRoot, "codex-inline");
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const env = { ...buildEnv(binDir), CLAUDE_PLUGIN_DATA: activeDataDir };
+  const dirName = resolveStateDirName(repo);
+  const siblingJobsDir = path.join(siblingDataDir, "state", dirName, "jobs");
+  fs.mkdirSync(siblingJobsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(siblingJobsDir, "review-elsewhere.json"),
+    JSON.stringify({ id: "review-elsewhere", status: "completed" }),
+    "utf8"
+  );
+
+  const result = run("node", [SCRIPT, "status", "review-elsewhere"], { cwd: repo, env });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /No job found for "review-elsewhere"/);
+  assert.match(result.stderr, /another Codex plugin store/);
+  assert.match(result.stderr, new RegExp(siblingDataDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("result for a job that is still running says so instead of claiming it does not exist", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+
+  const stateDir = resolveStateDir(repo);
+  fs.mkdirSync(path.join(stateDir, "jobs"), { recursive: true });
+  fs.writeFileSync(
+    path.join(stateDir, "state.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        config: { stopReviewGate: false },
+        jobs: [
+          {
+            id: "review-inflight",
+            status: "running",
+            title: "Codex Review",
+            createdAt: "2026-08-19T00:00:00.000Z",
+            updatedAt: "2026-08-19T00:01:00.000Z"
+          }
+        ]
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+
+  const result = run("node", [SCRIPT, "result", "review-inflight"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.notEqual(result.status, 0);
+  // Reporting "no job found" for a job that is plainly running is what makes a
+  // run feel lost; the branch that says otherwise was unreachable.
+  assert.match(result.stderr, /is still running/i);
+  assert.equal(/No finished job found/.test(result.stderr), false);
 });
