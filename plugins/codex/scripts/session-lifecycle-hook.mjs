@@ -13,7 +13,7 @@ import {
   sendBrokerShutdown,
   teardownBrokerSession
 } from "./lib/broker-lifecycle.mjs";
-import { loadState, resolveStateFile, saveState } from "./lib/state.mjs";
+import { loadState, readJobFile, resolveJobFile, resolveStateFile, saveState, writeJobFile } from "./lib/state.mjs";
 import { TRANSCRIPT_PATH_ENV } from "./lib/claude-session-transfer.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 
@@ -39,7 +39,20 @@ function appendEnvVar(name, value) {
   fs.appendFileSync(process.env.CLAUDE_ENV_FILE, `export ${name}=${shellEscape(value)}\n`, "utf8");
 }
 
-function cleanupSessionJobs(cwd, sessionId) {
+/**
+ * Ending a Claude session must not destroy the work Codex already finished.
+ *
+ * This used to drop every job belonging to the ending session from the index,
+ * which made `saveState` unlink each job's stored result *and* its streamed log.
+ * A background review you ran, then closed the session on, was gone — and the
+ * only way to see the findings again was to pay for the review a second time.
+ *
+ * Now the session boundary only settles what is still in flight: kill the
+ * process tree of anything running and record it as `interrupted`. Finished
+ * results stay on disk, bounded by the existing MAX_JOBS cap, and remain
+ * reachable through `/codex:status --all` and `/codex:result <id>`.
+ */
+function finalizeSessionJobs(cwd, sessionId) {
   if (!cwd || !sessionId) {
     return;
   }
@@ -51,12 +64,15 @@ function cleanupSessionJobs(cwd, sessionId) {
   }
 
   const state = loadState(workspaceRoot);
-  const removedJobs = state.jobs.filter((job) => job.sessionId === sessionId);
-  if (removedJobs.length === 0) {
+  const sessionJobs = state.jobs.filter((job) => job.sessionId === sessionId);
+  if (sessionJobs.length === 0) {
     return;
   }
 
-  for (const job of removedJobs) {
+  const interruptedAt = new Date().toISOString();
+  const interruptedIds = new Set();
+
+  for (const job of sessionJobs) {
     const stillRunning = job.status === "queued" || job.status === "running";
     if (!stillRunning) {
       continue;
@@ -66,12 +82,50 @@ function cleanupSessionJobs(cwd, sessionId) {
     } catch {
       // Ignore teardown failures during session shutdown.
     }
+    interruptedIds.add(job.id);
+  }
+
+  if (interruptedIds.size === 0) {
+    return;
   }
 
   saveState(workspaceRoot, {
     ...state,
-    jobs: state.jobs.filter((job) => job.sessionId !== sessionId)
+    jobs: state.jobs.map((job) =>
+      interruptedIds.has(job.id)
+        ? {
+            ...job,
+            status: "interrupted",
+            phase: "interrupted",
+            pid: null,
+            completedAt: interruptedAt,
+            updatedAt: interruptedAt,
+            errorMessage: job.errorMessage ?? "The Claude session ended while this job was still running."
+          }
+        : job
+    )
   });
+
+  for (const jobId of interruptedIds) {
+    const jobFile = resolveJobFile(workspaceRoot, jobId);
+    if (!fs.existsSync(jobFile)) {
+      continue;
+    }
+    try {
+      const storedJob = readJobFile(jobFile);
+      writeJobFile(workspaceRoot, jobId, {
+        ...storedJob,
+        status: "interrupted",
+        phase: "interrupted",
+        pid: null,
+        completedAt: interruptedAt,
+        errorMessage:
+          storedJob.errorMessage ?? "The Claude session ended while this job was still running."
+      });
+    } catch {
+      // A malformed job file must not block session teardown.
+    }
+  }
 }
 
 function handleSessionStart(input) {
@@ -101,7 +155,7 @@ async function handleSessionEnd(input) {
     await sendBrokerShutdown(brokerEndpoint);
   }
 
-  cleanupSessionJobs(cwd, input.session_id || process.env[SESSION_ID_ENV]);
+  finalizeSessionJobs(cwd, input.session_id || process.env[SESSION_ID_ENV]);
   teardownBrokerSession({
     endpoint: brokerEndpoint,
     pidFile,

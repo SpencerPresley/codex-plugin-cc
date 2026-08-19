@@ -259,7 +259,11 @@ export function resolveResultJob(cwd, reference) {
   const selected = matchJobReference(
     jobs,
     reference,
-    (job) => job.status === "completed" || job.status === "failed" || job.status === "cancelled"
+    (job) =>
+      job.status === "completed" ||
+      job.status === "failed" ||
+      job.status === "cancelled" ||
+      job.status === "interrupted"
   );
 
   if (selected) {

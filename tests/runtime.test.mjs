@@ -1878,7 +1878,7 @@ test("cancel sends turn interrupt to the shared app-server before killing a brok
   assert.equal(cleanup.status, 0, cleanup.stderr);
 });
 
-test("session end fully cleans up jobs for the ending session", async (t) => {
+test("session end interrupts running jobs but keeps finished results for the ending session", async (t) => {
   const repo = makeTempDir();
   initGitRepo(repo);
   fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
@@ -1978,11 +1978,18 @@ test("session end fully cleans up jobs for the ending session", async (t) => {
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(fs.existsSync(otherSessionLog), true);
-  assert.equal(fs.existsSync(otherJobFile), true);
+  // Nothing is deleted: the ending session's finished result and its streamed
+  // log survive, and so does every other session's.
   assert.deepEqual(
     fs.readdirSync(path.dirname(otherJobFile)).sort(),
-    [path.basename(otherJobFile), path.basename(otherSessionLog)].sort()
+    [
+      path.basename(completedJobFile),
+      path.basename(completedLog),
+      path.basename(otherJobFile),
+      path.basename(otherSessionLog),
+      path.basename(runningJobFile),
+      path.basename(runningLog)
+    ].sort()
   );
 
   await waitFor(() => {
@@ -1995,8 +2002,26 @@ test("session end fully cleans up jobs for the ending session", async (t) => {
   });
 
   const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
-  assert.deepEqual(state.jobs.map((job) => job.id), ["review-other"]);
-  const otherJob = state.jobs[0];
+  assert.deepEqual(
+    state.jobs.map((job) => job.id).sort(),
+    ["review-completed", "review-other", "review-running"]
+  );
+
+  const byId = new Map(state.jobs.map((job) => [job.id, job]));
+  // The job that was still running is settled, not erased.
+  assert.equal(byId.get("review-running").status, "interrupted");
+  assert.equal(byId.get("review-running").phase, "interrupted");
+  assert.equal(byId.get("review-running").pid, null);
+  assert.match(byId.get("review-running").errorMessage, /Claude session ended/);
+  assert.equal(
+    JSON.parse(fs.readFileSync(runningJobFile, "utf8")).status,
+    "interrupted"
+  );
+  // A finished job from the ending session keeps its status and its result file.
+  assert.equal(byId.get("review-completed").status, "completed");
+  assert.equal(byId.get("review-completed").logFile, completedLog);
+
+  const otherJob = byId.get("review-other");
   assert.equal(otherJob.logFile, otherSessionLog);
 });
 
