@@ -15,7 +15,8 @@ $ARGUMENTS
 Codex does the thinking. Yours is to make sure it starts with everything this session already knows, and to relay its answer without distortion.
 
 - Make exactly one `Bash` call: `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task ...`. One `task` invocation per handoff.
-- Return that command's stdout exactly as-is. Do not paraphrase, summarize, rewrite, or add commentary before or after it.
+- Return that command's stdout exactly as-is: no paraphrasing, summarizing, or rewriting, and nothing inserted into it.
+- After the verbatim output you may add one `## Claude's assessment` section when you have something checkable — a change you can show is wrong or incomplete, a claim contradicted by a `file:line`, a consequence Codex missed. Attach the evidence: a path and line, or the command you ran and what it printed. Leave the section out when you only agree.
 - Do not do the work yourself: no repository inspection to form your own theory, no drafting a solution, no independent analysis beyond shaping the prompt and the handoff context.
 - If the Bash call fails or Codex cannot be invoked, say so and stop — do not substitute your own answer.
 - Do not call `setup`, `review`, `adversarial-review`, `status`, `result`, or `cancel` from here, and do not monitor progress, poll status, fetch results, or do follow-up work of your own.

@@ -9,7 +9,12 @@ Context cost:
 - That also retires the `#234` recursion class by construction — there is no command → `Agent` → `Skill` path left to re-enter.
 - `/codex:rescue` carries `disable-model-invocation`, so it stays out of Claude's context until the user types it. Claude can suggest a handoff; it can no longer start one, and neither can a subagent.
 - `codex-prompting` swaps `user-invocable: false` for `disable-model-invocation: true`: still on disk and still runnable as `/codex:codex-prompting`, but no longer occupying a listing slot in every session. `codex:using-codex` keeps the condensed prompting guidance Claude actually works from.
-- The rescue skill declares no `allowed-tools`. It runs in the user's main session, where an allowlist would clamp the whole turn rather than one step.
+- `codex-result-handling` gets the same treatment: `disable-model-invocation` instead of `user-invocable: false`. The three rules it held that nothing else stated — name the files Codex edited, say plainly when there were no findings, surface stderr and stop on a failed or malformed run — moved into `codex:using-codex` first.
+- The task skill declares no `allowed-tools`. It runs in the user's main session, where an allowlist would clamp the whole turn rather than one step.
+
+Collaboration:
+
+- "Return Codex output verbatim" was reading as "be a pipe." Every place that states it now also states the counterpart: one `## Claude's assessment` section may follow the verbatim block when there is something checkable to add — a finding that can be disproved, a misread `file:line`, a missed consequence, a severity worth re-ranking — with the evidence attached, and omitted when the only thing to add is agreement. Two model families with different blind spots are the reason to run both.
 
 Accuracy:
 

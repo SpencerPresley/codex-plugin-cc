@@ -127,7 +127,12 @@ test("task is a single user-invoked skill that forwards to the task helper", () 
   assert.match(taskSkill, /Make exactly one `Bash` call/i);
   assert.match(taskSkill, /codex-companion\.mjs" task/);
   assert.match(taskSkill, /Return that command's stdout exactly as-is/i);
-  assert.match(taskSkill, /Do not paraphrase, summarize, rewrite, or add commentary before or after it/i);
+  assert.match(taskSkill, /no paraphrasing, summarizing, or rewriting, and nothing inserted into it/i);
+  // Verbatim means unfiltered, not mute: a second model is only useful if its
+  // output can be argued with.
+  assert.match(taskSkill, /After the verbatim output you may add one `## Claude's assessment` section/i);
+  assert.match(taskSkill, /Attach the evidence/i);
+  assert.match(taskSkill, /Leave the section out when you only agree/i);
   assert.match(taskSkill, /no repository inspection to form your own theory, no drafting a solution/i);
   assert.match(taskSkill, /do not substitute your own answer/i);
   assert.match(taskSkill, /Do not call `setup`, `review`, `adversarial-review`, `status`, `result`, or `cancel`/i);
@@ -213,7 +218,15 @@ test("review results can be contested by Claude without being edited", () => {
 
   assert.match(resultHandling, /Claude's assessment/);
   assert.match(resultHandling, /Attach the evidence/i);
-  assert.match(usingCodex, /Assessing the review/);
+  assert.match(usingCodex, /Assessing the output/);
+  assert.match(usingCodex, /Verbatim is about not filtering what Codex said — it is not an instruction to be a pipe/);
+  // The rules that only lived in the hidden reference now live where Claude
+  // will actually read them.
+  assert.match(usingCodex, /If Codex edited files, state that and list the touched files/i);
+  assert.match(usingCodex, /surface the most actionable stderr lines and stop there/i);
+  // Hidden from the model, still runnable by the user.
+  assert.match(resultHandling, /^disable-model-invocation: true$/m);
+  assert.equal(/user-invocable/.test(resultHandling), false);
   // Auto-applying fixes remains forbidden even though commentary is allowed.
   assert.match(resultHandling, /Auto-applying fixes from a review is strictly forbidden/);
 });

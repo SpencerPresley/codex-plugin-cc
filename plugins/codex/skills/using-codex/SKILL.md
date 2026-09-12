@@ -17,9 +17,10 @@ In *this* build the review commands are model-invokable, so you (Claude) can run
 ## Critical rules (non-negotiable)
 
 - **Reviews are repository-preserving, not filesystem read-only.** Codex runs without filesystem sandboxing so it can use its full toolset. It must not intentionally edit or fix the reviewed work, but legitimate inspection and verification commands may create caches, logs, build output, coverage data, or scratch probes. Those incidental writes are acceptable and are not a reason to panic, abandon the review, or silently implement cleanup. After presenting findings, STOP and ask the user which findings, if any, to fix.
-- **Return Codex output verbatim.** No paraphrasing or summarizing of review or task output. Present findings ordered by severity, with file paths and line numbers exactly as reported. You may append one `## Claude's assessment` section *after* the verbatim block — see "Assessing the review" below.
+- **Return Codex output verbatim.** No paraphrasing or summarizing of review or task output. Present findings ordered by severity, with file paths and line numbers exactly as reported. You may append one `## Claude's assessment` section *after* the verbatim block — see "Assessing the output" below.
 - **Know what intentionally writes.** `task` is write-capable and may edit the workspace. `review` and `adversarial-review` must not intentionally change reviewed files, configuration, the Git index, refs, or commits.
 - **Don't improvise auth.** If Codex isn't set up/authenticated, send the user to `/codex:setup`.
+- **Say what changed and what broke.** If Codex edited files, state that and list the touched files the helper reports. If there were no findings, say so plainly and keep the residual-risk note to a line. If the run failed or the output came back malformed, surface the most actionable stderr lines and stop there rather than guessing at what Codex would have said.
 
 Review commands may use a dedicated temporary directory for probes. Repo-native checks may also run in the repository when that produces better evidence, even if they leave incidental artifacts such as `.ruff_cache/`. Do not run commands intended to rewrite reviewed work, such as `ruff check --fix`, `ruff format`, snapshot updates, codemods, or lockfile-updating package-manager operations.
 
@@ -46,7 +47,7 @@ Hands a task to Codex (debug, fix, implement, investigate, or continue prior Cod
 - `--resume` continues the latest Codex thread in this repo; `--fresh` forces a new one.
 - `--with-session` imports the current Claude session into the Codex thread first, so Codex starts from the actual investigation instead of a one-line restatement. Use it when the task depends on the conversation so far; it cannot be combined with `--resume`.
 - Sandbox: a write-capable task inherits the user's own Codex configuration rather than a narrower plugin-chosen one, so it can run the build, the tests, and the network calls a fix usually needs.
-- Return the companion's stdout verbatim.
+- Return the companion's stdout verbatim; an assessment section after it is allowed, a rewrite of it is not.
 - Examples: `/codex:task investigate why the integration test is flaky`, `/codex:task --model spark fix the failing test`, `/codex:task --resume apply the top fix`.
 
 ### `codex:setup` — readiness + review gate
@@ -72,9 +73,11 @@ These stay user-only, so route the user instead of invoking them:
 
 Jobs are tracked per workspace (max 50 retained). The default `/codex:status` view is scoped to the current Claude session; `--all` shows every retained job. Results survive the session that produced them — a job that was still running when a session ended is recorded as `interrupted`, not deleted. If a job id cannot be found, the error names the other plugin-install store it lives in rather than implying the run is gone.
 
-## Assessing the review
+## Assessing the output
 
-Running a second model is only worth it if its output can be argued with. After the verbatim block you may add one `## Claude's assessment` section when you have something checkable: a finding you can disprove, a `file:line` the reviewer misread, a consequence it missed, or a severity you would rank differently — each with the evidence attached. Skip the section entirely when you only agree. Never edit files off the back of a review without being asked.
+Running a second model is only worth it if its output can be argued with. Verbatim is about not filtering what Codex said — it is not an instruction to be a pipe.
+
+After the verbatim block you may add one `## Claude's assessment` section when you have something checkable: a finding you can disprove, a `file:line` it misread, a consequence it missed, a severity you would rank differently, or — for a task run — a change you can show is wrong or incomplete. Attach the evidence each time: a path and line, or the command you ran and what it printed. Skip the section entirely when you only agree; restating agreement is noise. Never edit files off the back of a review without being asked.
 
 ## Review output shape
 

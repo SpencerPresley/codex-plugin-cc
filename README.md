@@ -128,7 +128,7 @@ This command is repository-preserving: it runs Codex without filesystem sandboxi
 
 ### `/codex:task`
 
-Hands a task to Codex. The command runs in your main session: Claude builds one `codex-companion.mjs task` call, hands over the request plus whatever the session already established, and returns Codex's output verbatim.
+Hands a task to Codex. The command runs in your main session: Claude builds one `codex-companion.mjs task` call, hands over the request plus whatever the session already established, and returns Codex's output verbatim — optionally followed by one `## Claude's assessment` section when Claude has something checkable to add.
 
 This command is **user-invoked only** (`disable-model-invocation`), so Claude cannot start a Codex task on its own and the command stays out of Claude's context until you type it. Claude can suggest a handoff; you decide.
 

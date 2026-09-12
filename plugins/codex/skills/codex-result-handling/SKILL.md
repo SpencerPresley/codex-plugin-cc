@@ -1,10 +1,12 @@
 ---
 name: codex-result-handling
-description: Internal guidance for presenting Codex helper output back to the user
-user-invocable: false
+description: Reference for presenting Codex helper output back to the user
+disable-model-invocation: true
 ---
 
 # Codex Result Handling
+
+Full reference for presenting Codex output. Model invocation is off, so this loads only when the user runs `/codex:codex-result-handling`; `codex:using-codex` carries the rules Claude works from.
 
 When the helper returns Codex output:
 - Preserve the helper's verdict, summary, findings, and next steps structure.
