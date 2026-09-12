@@ -10,6 +10,7 @@ Context cost:
 - `/codex:rescue` carries `disable-model-invocation`, so it stays out of Claude's context until the user types it. Claude can suggest a handoff; it can no longer start one, and neither can a subagent.
 - `codex-prompting` swaps `user-invocable: false` for `disable-model-invocation: true`: still on disk and still runnable as `/codex:codex-prompting`, but no longer occupying a listing slot in every session. `codex:using-codex` keeps the condensed prompting guidance Claude actually works from.
 - `codex-result-handling` gets the same treatment: `disable-model-invocation` instead of `user-invocable: false`. The three rules it held that nothing else stated — name the files Codex edited, say plainly when there were no findings, surface stderr and stop on a failed or malformed run — moved into `codex:using-codex` first.
+- `/codex:setup` moves to `skills/setup/SKILL.md` with `disable-model-invocation`. It had never been model-invoked in any recorded session, and everything that mentions it only ever points the user at it. Dropping its `allowed-tools` also means a global `npm install -g @openai/codex` prompts for permission instead of being pre-authorized.
 - The task skill declares no `allowed-tools`. It runs in the user's main session, where an allowlist would clamp the whole turn rather than one step.
 
 Collaboration:

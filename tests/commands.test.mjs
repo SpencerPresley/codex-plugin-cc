@@ -95,7 +95,6 @@ test("continue is not exposed as a user-facing command", () => {
     "cancel.md",
     "result.md",
     "review.md",
-    "setup.md",
     "status.md",
     "transfer.md"
   ]);
@@ -263,8 +262,13 @@ test("hooks keep session-end cleanup and stop gating enabled", () => {
   assert.match(source, /session-lifecycle-hook\.mjs/);
 });
 
-test("setup command can offer Codex install and still points users to codex login", () => {
-  const setup = read("commands/setup.md");
+test("setup is a user-invoked skill that can offer Codex install and still points users to codex login", () => {
+  const setup = read("skills/setup/SKILL.md");
+  assert.match(setup, /^name: setup$/m);
+  assert.match(setup, /^disable-model-invocation: true$/m);
+  // Runs in the user's main session, so no allowed-tools clamp on the turn —
+  // and a global npm install prompts for permission like any other write.
+  assert.equal(/allowed-tools/.test(setup), false);
   const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
 
   assert.match(setup, /argument-hint:\s*'\[--enable-review-gate\|--disable-review-gate\]'/);

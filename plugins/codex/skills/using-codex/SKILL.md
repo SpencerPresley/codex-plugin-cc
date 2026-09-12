@@ -50,8 +50,8 @@ Hands a task to Codex (debug, fix, implement, investigate, or continue prior Cod
 - Return the companion's stdout verbatim; an assessment section after it is allowed, a rewrite of it is not.
 - Examples: `/codex:task investigate why the integration test is flaky`, `/codex:task --model spark fix the failing test`, `/codex:task --resume apply the top fix`.
 
-### `codex:setup` — readiness + review gate
-Checks Codex CLI install/auth. Can toggle the optional **stop-time review gate** (`--enable-review-gate` / `--disable-review-gate`) — when on, a `Stop` hook runs a Codex review of the previous turn and can block stopping until issues are addressed. The gate can create a long Claude↔Codex loop and burn usage; only enable it when actively watching.
+### `/codex:setup` — readiness + review gate (user-invoked only)
+Checks Codex CLI install/auth. Point the user at it; you cannot run it. Can toggle the optional **stop-time review gate** (`--enable-review-gate` / `--disable-review-gate`) — when on, a `Stop` hook runs a Codex review of the previous turn and can block stopping until issues are addressed. The gate can create a long Claude↔Codex loop and burn usage; only enable it when actively watching.
 
 ## Background vs foreground
 
