@@ -66,7 +66,6 @@ If Codex is installed but not logged in yet, run:
 After install, you should see:
 
 - the slash commands listed below
-- the `codex:codex-rescue` subagent in `/agents`
 
 One simple first run is:
 
@@ -129,7 +128,9 @@ This command is repository-preserving: it runs Codex without filesystem sandboxi
 
 ### `/codex:rescue`
 
-Hands a task to Codex through the `codex:codex-rescue` subagent.
+Hands a task to Codex. The command runs in your main session: Claude builds one `codex-companion.mjs task` call, hands over the request plus whatever the session already established, and returns Codex's output verbatim.
+
+This command is **user-invoked only** (`disable-model-invocation`), so Claude cannot start a Codex rescue on its own and the command stays out of Claude's context until you type it. Claude can suggest a handoff; you decide.
 
 Use it when you want Codex to:
 
@@ -139,7 +140,7 @@ Use it when you want Codex to:
 - take a faster or cheaper pass with a smaller model
 
 > [!NOTE]
-> Depending on the task and the model you choose these tasks might take a long time and it's generally recommended to force the task to be in the background or move the agent to the background.
+> Depending on the task and the model you choose these tasks might take a long time, so `--background` is generally recommended: the companion enqueues the run, prints a job id, and you follow up with `/codex:status` and `/codex:result`.
 
 It supports `--background`, `--wait`, `--resume`, `--fresh`, and `--with-session`. If you omit `--resume` and `--fresh`, the plugin can offer to continue the latest rescue thread for this repo.
 
@@ -159,11 +160,7 @@ Examples:
 /codex:rescue --background investigate the regression
 ```
 
-You can also just ask for a task to be delegated to Codex:
-
-```text
-Ask Codex to redesign the database connection to be more resilient.
-```
+Asking Claude in prose ("ask Codex to redesign the database connection") no longer starts a run by itself — Claude will point you at the command, and you type it.
 
 **Notes:**
 

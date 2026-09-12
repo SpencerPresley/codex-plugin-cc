@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.10
+
+Context cost:
+
+- `/codex:rescue` is now a single user-invoked skill (`skills/rescue/SKILL.md`). The `codex:codex-rescue` subagent and the `codex-cli-runtime` skill are gone: the main session builds the one `codex-companion.mjs task` call itself, so the forwarding contract and the flag mapping live in one file instead of three. Transcript evidence for the collapse: the subagent was dispatched zero times across every recorded session, while 71 `codex-companion.mjs task` calls came straight from main threads.
+- That also retires the `#234` recursion class by construction — there is no command → `Agent` → `Skill` path left to re-enter.
+- `/codex:rescue` carries `disable-model-invocation`, so it stays out of Claude's context until the user types it. Claude can suggest a handoff; it can no longer start one, and neither can a subagent.
+- `codex-prompting` swaps `user-invocable: false` for `disable-model-invocation: true`: still on disk and still runnable as `/codex:codex-prompting`, but no longer occupying a listing slot in every session. `codex:using-codex` keeps the condensed prompting guidance Claude actually works from.
+- The rescue skill declares no `allowed-tools`. It runs in the user's main session, where an allowlist would clamp the whole turn rather than one step.
+
+Accuracy:
+
+- Model and effort defaults are described as what the helper does: unset sends `model: null` / `effort: null`, so `~/.codex/config.toml` decides. The old "Codex defaults to `medium`" line was OpenAI's API default, not what a configured machine resolves to.
+- `spark` alias resolution is documented as the helper's job (`MODEL_ALIASES` in `scripts/codex-companion.mjs`) rather than something Claude restates and can drift from.
+
 ## 1.0.9
 
 Durability and recovery:

@@ -93,7 +93,6 @@ test("continue is not exposed as a user-facing command", () => {
   assert.deepEqual(commandFiles, [
     "adversarial-review.md",
     "cancel.md",
-    "rescue.md",
     "result.md",
     "review.md",
     "setup.md",
@@ -102,97 +101,70 @@ test("continue is not exposed as a user-facing command", () => {
   ]);
 });
 
-test("rescue command absorbs continue semantics", () => {
-  const rescue = read("commands/rescue.md");
-  const agent = read("agents/codex-rescue.md");
+test("rescue is a single user-invoked skill that forwards to the task helper", () => {
+  const rescue = read("skills/rescue/SKILL.md");
   const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
-  const runtimeSkill = read("skills/codex-cli-runtime/SKILL.md");
 
-  assert.match(rescue, /The final user-visible response must be Codex's output verbatim/i);
-  assert.match(rescue, /allowed-tools:\s*Bash\(node:\*\),\s*AskUserQuestion,\s*Agent/);
-  // Regression for #234: `Skill(codex:rescue)` from the main agent recursed
-  // because rescue.md named the routing with ambiguous prose ("Route this
-  // request to the `codex:codex-rescue` subagent") while running under
-  // `context: fork` — forked general-purpose subagents do not expose the
-  // `Agent` tool, so the fork fell back to `Skill` and re-entered this
-  // command. Pin the explicit transport and the inline (no-fork) execution.
-  assert.match(rescue, /subagent_type: "codex:codex-rescue"/);
-  assert.match(rescue, /do not call `Skill\(codex:codex-rescue\)`/i);
-  assert.doesNotMatch(rescue, /^context:\s*fork\b/m);
-  assert.match(rescue, /--background\|--wait/);
-  assert.match(rescue, /--resume\|--fresh/);
-  assert.match(rescue, /--model <model\|spark>/);
-  assert.match(rescue, /--effort <none\|minimal\|low\|medium\|high\|xhigh>/);
+  // The command + codex-rescue subagent + codex-cli-runtime skill collapsed into
+  // one surface: the main session builds the `task` call itself. That removes
+  // the #234 recursion class (command -> Agent -> Skill re-entering the command)
+  // along with the agent and runtime-contract indirection.
+  assert.equal(fs.existsSync(path.join(PLUGIN_ROOT, "agents")), false);
+  assert.equal(fs.existsSync(path.join(PLUGIN_ROOT, "skills", "codex-cli-runtime")), false);
+  assert.equal(fs.existsSync(path.join(PLUGIN_ROOT, "commands", "rescue.md")), false);
+  assert.equal(/codex-rescue|subagent|Agent tool/i.test(rescue), false);
+
+  // User-invoked only: it stays out of Claude's context until the user types it.
+  assert.match(rescue, /^disable-model-invocation: true$/m);
+  assert.match(rescue, /^name: rescue$/m);
+  // No allowed-tools: this body runs in the user's main session, where an
+  // allowlist would clamp the whole turn's tools, not just this step.
+  assert.equal(/allowed-tools/.test(rescue), false);
+  assert.match(rescue, /\$ARGUMENTS/);
+
+  // Forwarder contract.
+  assert.match(rescue, /Make exactly one `Bash` call/i);
+  assert.match(rescue, /codex-companion\.mjs" task/);
+  assert.match(rescue, /Return that command's stdout exactly as-is/i);
+  assert.match(rescue, /Do not paraphrase, summarize, rewrite, or add commentary before or after it/i);
+  assert.match(rescue, /no repository inspection to form your own theory, no drafting a solution/i);
+  assert.match(rescue, /do not substitute your own answer/i);
+  assert.match(rescue, /Do not call `setup`, `review`, `adversarial-review`, `status`, `result`, or `cancel`/i);
+  assert.match(rescue, /One `task` invocation per rescue handoff/i);
+
+  // Prompt shaping and handoff context are the only Claude-side work.
+  assert.match(rescue, /You may sharpen it into a tighter Codex prompt/i);
+  assert.match(rescue, /<handoff_context>/);
+  assert.match(rescue, /Mark that context unverified/i);
+  assert.match(rescue, /--with-session/);
+
+  // Resume semantics.
   assert.match(rescue, /task-resume-candidate --json/);
   assert.match(rescue, /AskUserQuestion/);
   assert.match(rescue, /Continue current Codex thread/);
   assert.match(rescue, /Start a new Codex thread/);
-  assert.match(rescue, /run the `codex:codex-rescue` subagent in the background/i);
-  assert.match(rescue, /default to foreground/i);
-  assert.match(rescue, /Do not forward them to `task`/i);
-  assert.match(rescue, /`--model` and `--effort` are runtime-selection flags/i);
-  assert.match(rescue, /Leave `--effort` unset unless the user explicitly asks for a specific reasoning effort/i);
-  assert.match(rescue, /If they ask for `spark`, map it to `gpt-5\.3-codex-spark`/i);
-  assert.match(rescue, /If the request includes `--resume`, do not ask whether to continue/i);
-  assert.match(rescue, /If the request includes `--fresh`, do not ask whether to continue/i);
-  assert.match(rescue, /If the user chooses continue, add `--resume`/i);
-  assert.match(rescue, /If the user chooses a new thread, add `--fresh`/i);
-  assert.match(rescue, /hands the work to Codex; it does not do the work/i);
-  assert.match(rescue, /<handoff_context>/);
-  assert.match(rescue, /--with-session/);
-  assert.match(rescue, /Return the Codex companion stdout verbatim to the user/i);
-  assert.match(rescue, /Do not paraphrase, summarize, rewrite, or add commentary before or after it/i);
-  assert.match(rescue, /return that command's stdout as-is/i);
-  assert.match(rescue, /Leave `--resume` and `--fresh` in the forwarded request/i);
-  assert.match(agent, /--resume/);
-  assert.match(agent, /--fresh/);
-  assert.match(agent, /Codex does the thinking/i);
-  assert.match(agent, /Prefer foreground for a small, bounded request; background for anything open-ended, multi-step, or long-running/i);
-  assert.match(agent, /Make exactly one `Bash` call/i);
-  // The forwarder still may not do the work itself...
-  assert.match(agent, /No repository inspection to form your own theory, no drafting a solution/i);
-  assert.match(agent, /do not substitute your own answer/i);
-  assert.match(agent, /Return the `codex-companion` stdout exactly as-is/i);
-  // ...but it is expected to hand over what the main thread already knows,
-  // rather than making Codex rediscover the investigation from a one-liner.
-  assert.match(agent, /<handoff_context>/);
-  assert.match(agent, /Mark that context as unverified/i);
-  assert.match(agent, /--with-session/);
-  assert.match(agent, /codex-prompting/);
-  assert.match(agent, /Map `spark` to `gpt-5\.3-codex-spark`/i);
-  assert.match(runtimeSkill, /only job is to invoke `task` once and return that stdout unchanged/i);
-  assert.match(runtimeSkill, /Do not call `setup`, `review`, `adversarial-review`, `status`, `result`, or `cancel`/i);
-  assert.match(runtimeSkill, /use the `codex-prompting` skill to rewrite the user's request into a tighter Codex prompt/i);
-  assert.match(runtimeSkill, /Prompt drafting and handoff context are the only Claude-side work allowed/i);
-  assert.match(runtimeSkill, /`--with-session` imports the current Claude transcript/i);
-  assert.match(runtimeSkill, /Leave `--sandbox` unset/i);
-  assert.match(runtimeSkill, /Leave `--effort` unset unless the user explicitly requests a specific effort/i);
-  assert.match(runtimeSkill, /Leave model unset by default/i);
-  assert.match(runtimeSkill, /Map `spark` to `--model gpt-5\.3-codex-spark`/i);
-  assert.match(runtimeSkill, /If the forwarded request includes `--background` or `--wait`, treat that as Claude-side execution control only/i);
-  assert.match(runtimeSkill, /Strip it before calling `task`/i);
-  assert.match(runtimeSkill, /`--effort`: accepted values are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`/i);
-  assert.match(runtimeSkill, /Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own/i);
-  assert.match(runtimeSkill, /If the Bash call fails or Codex cannot be invoked, return nothing/i);
-  assert.match(readme, /`codex:codex-rescue` subagent/i);
-  assert.match(readme, /if you do not pass `--model` or `--effort`, Codex chooses its own defaults/i);
-  assert.match(readme, /--effort medium/i);
-  assert.match(readme, /--with-session/);
-  // The README must not advertise a model generation the plugin no longer
-  // routes to by default.
-  assert.equal(/gpt-5\.4-mini/.test(readme), false);
-  assert.match(readme, /`spark`, the plugin maps that to `gpt-5\.3-codex-spark`/i);
-  assert.match(readme, /continue a previous Codex task/i);
-  assert.match(readme, /### `\/codex:setup`/);
-  assert.match(readme, /### `\/codex:review`/);
-  assert.match(readme, /### `\/codex:adversarial-review`/);
-  assert.match(readme, /uses the same review target selection as `\/codex:review`/i);
-  assert.match(readme, /--base main challenge whether this was the right caching and retry design/);
+  assert.match(rescue, /If the request includes `--resume` or `--fresh`, do not ask whether to continue/i);
+
+  // Flag mapping now lives here rather than in a runtime-contract skill, and
+  // backgrounding is the helper's own job rather than a Claude-side agent.
+  assert.match(rescue, /--background\|--wait/);
+  assert.match(rescue, /--resume\|--fresh/);
+  assert.match(rescue, /--model <model\|spark>/);
+  assert.match(rescue, /--effort <none\|minimal\|low\|medium\|high\|xhigh>/);
+  assert.match(rescue, /`--background` → `task --background`/);
+  assert.match(rescue, /Never pass `--wait` through to `task`/i);
+  assert.match(rescue, /`--resume` → strip the token from the task text and pass `--resume-last`/i);
+  // The helper owns the alias and the defaults; the skill must not restate them
+  // as Claude-side mapping that can drift from scripts/codex-companion.mjs.
+  assert.match(rescue, /the helper owns that alias \(`spark` → `gpt-5\.3-codex-spark`\)/i);
+  assert.match(rescue, /`--effort` → pass through/i);
+  assert.match(rescue, /unset sends `effort: null`, so `model_reasoning_effort` from the user's Codex config applies/i);
+  assert.match(rescue, /`--write` → add by default/i);
+  assert.match(rescue, /`--sandbox` → leave unset/i);
+
   assert.match(readme, /### `\/codex:rescue`/);
-  assert.match(readme, /### `\/codex:transfer`/);
-  assert.match(readme, /### `\/codex:status`/);
-  assert.match(readme, /### `\/codex:result`/);
-  assert.match(readme, /### `\/codex:cancel`/);
+  assert.equal(/codex:codex-rescue/.test(readme), false);
+  assert.match(readme, /user-invoked only/i);
 });
 
 test("transfer and cancel stay user-only while status and result are model-invokable", () => {
@@ -246,19 +218,22 @@ test("review results can be contested by Claude without being edited", () => {
 });
 
 test("internal docs use task terminology for rescue runs", () => {
-  const runtimeSkill = read("skills/codex-cli-runtime/SKILL.md");
+  const rescue = read("skills/rescue/SKILL.md");
   const promptingSkill = read("skills/codex-prompting/SKILL.md");
   const promptRecipes = read("skills/codex-prompting/references/codex-prompt-recipes.md");
 
-  assert.match(runtimeSkill, /codex-companion\.mjs" task "<raw arguments>"/);
-  assert.match(runtimeSkill, /Use `task` for every rescue request/i);
-  assert.match(runtimeSkill, /task --resume-last/i);
+  assert.match(rescue, /codex-companion\.mjs" task \.\.\./);
+  assert.match(rescue, /`--resume-last`/);
+  // The skill stays on disk as a user-invoked reference: model invocation off,
+  // slash command on.
+  assert.match(promptingSkill, /^disable-model-invocation: true$/m);
+  assert.equal(/user-invocable/.test(promptingSkill), false);
   assert.match(promptingSkill, /Hand over what you already know/i);
   assert.match(promptingSkill, /task --with-session/);
   // The guidance must track the model Codex actually routes to, not the one it
   // shipped against.
   assert.match(promptingSkill, /GPT-5\.6/);
-  assert.match(promptingSkill, /Reasoning effort defaults to `medium` when unset/i);
+  assert.match(promptingSkill, /The plugin sends `effort: null` when `--effort` is unset/i);
   assert.equal(/GPT-5\.4|GPT-5\.5/.test(promptingSkill), false);
   assert.match(promptRecipes, /Codex task prompts/i);
   assert.match(promptRecipes, /Use these as starting templates for Codex task prompts/i);

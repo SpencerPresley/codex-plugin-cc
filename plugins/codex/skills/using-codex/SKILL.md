@@ -8,7 +8,7 @@ description: Use when running Codex reviews or delegating work through the Codex
 Codex is a second AI collaborator from another model family. Two shapes of use:
 
 - **Review** (`review`, `adversarial-review`) — repository-preserving critique that does not intentionally edit or fix the reviewed work.
-- **Delegate** (`rescue`) — **write-capable** work handed to a Codex agent (debug, fix, implement, investigate).
+- **Delegate** (`rescue`) — **write-capable** work handed to Codex (debug, fix, implement, investigate). User-invoked only.
 
 In *this* build the review commands are model-invokable, so you (Claude) can run them directly.
 
@@ -38,15 +38,15 @@ Same targets + `--base`, but it **attacks the approach/design/tradeoffs/assumpti
 - Use for: pre-ship pressure-testing — is this the right design? what breaks under load/partial-failure/rollback?
 - Examples: `/codex:adversarial-review`, `/codex:adversarial-review --base main challenge the retry + caching design`.
 
-### `codex:rescue` — delegate write-capable work
-Hands a task to the `codex:codex-rescue` agent (debug, fix, implement, investigate, or continue prior Codex work).
+### `/codex:rescue` — delegate write-capable work (user-invoked only)
+Hands a task to Codex (debug, fix, implement, investigate, or continue prior Codex work). **The user runs it; you cannot** — it carries `disable-model-invocation`, so it never appears in your skill list and the `Skill` tool refuses it. When a handoff would help, say so and let the user type it. Once they do, the command body runs in this session: you build one `codex-companion.mjs task` call and return its stdout verbatim.
 - Flags: `--background` | `--wait`, `--resume` | `--fresh`, `--model <name|spark>`, `--effort <none|minimal|low|medium|high|xhigh>`.
-- **Write-capable by default.** Use proactively for substantial, clearly-bounded handoffs; don't grab quick tasks you can finish yourself, and don't spawn nested Codex runs for trivial work.
+- **Write-capable by default.** Worth suggesting for substantial, clearly-bounded handoffs; not for quick tasks you can finish yourself.
 - `--model`/`--effort`: leave unset unless the user asks (Codex picks sane defaults). `spark` → `gpt-5.3-codex-spark`. Any other model name passes through.
 - `--resume` continues the latest rescue thread in this repo; `--fresh` forces a new one.
 - `--with-session` imports the current Claude session into the Codex thread first, so Codex starts from the actual investigation instead of a one-line restatement. Use it when the task depends on the conversation so far; it cannot be combined with `--resume`.
 - Sandbox: a write-capable rescue inherits the user's own Codex configuration rather than a narrower plugin-chosen one, so it can run the build, the tests, and the network calls a fix usually needs.
-- Return the agent's output verbatim.
+- Return the companion's stdout verbatim.
 - Examples: `/codex:rescue investigate why the integration test is flaky`, `/codex:rescue --model spark fix the failing test`, `/codex:rescue --resume apply the top fix`.
 
 ### `codex:setup` — readiness + review gate
@@ -93,7 +93,7 @@ Codex responds best to compact, XML-block prompts. GPT-5.6 is concise and proact
 - Always: `<task>` (exact job + scope) + the smallest output contract (`<structured_output_contract>` or `<compact_output_contract>`).
 - Add as needed: `<default_follow_through_policy>` (act vs stop-and-ask), `<verification_loop>` (correctness), `<grounding_rules>` (don't invent — for review/research), `<action_safety>` (write-capable/broad tasks), `<missing_context_gating>` (don't guess).
 
-Recipes (block combos): **Diagnosis**, **Narrow Fix**, **Root-Cause Review**, **Research/Recommendation**, **Prompt-Patching**. The plugin's `codex-prompting` skill has the full templates and the GPT-5.6 specifics.
+Recipes (block combos): **Diagnosis**, **Narrow Fix**, **Root-Cause Review**, **Research/Recommendation**, **Prompt-Patching**. The full templates and the GPT-5.6 specifics live in the plugin's `codex-prompting` skill, which is user-invoked only (`/codex:codex-prompting`) and so never appears in your skill list — ask the user to run it if you want the templates verbatim.
 
 Antipatterns to avoid: vague task framing ("take a look"), no output contract, mixing unrelated jobs in one run, asking for "more reasoning" instead of a tighter contract, repeating the same rule in several blocks, blanket "always/never" for judgment calls, and unsupported certainty (ground claims).
 

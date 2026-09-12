@@ -1,12 +1,12 @@
 ---
 name: codex-prompting
-description: Internal guidance for composing Codex prompts (currently GPT-5.6) for coding, review, diagnosis, and research tasks inside the Codex Claude Code plugin
-user-invocable: false
+description: Reference for composing Codex prompts (currently GPT-5.6) for coding, review, diagnosis, and research tasks inside the Codex Claude Code plugin
+disable-model-invocation: true
 ---
 
 # Codex Prompting
 
-Use this skill when `codex:codex-rescue` needs to hand work to Codex.
+Reference for shaping a Codex task prompt. Model invocation is disabled, so this stays out of context until the user runs `/codex:codex-prompting`; `codex:using-codex` carries the condensed version Claude works from.
 
 Codex is a capable collaborator working the same problem you are, not a tool you configure. Give it the job, what "done" looks like, and the boundaries that matter — then let it work. The prompt's job is to remove ambiguity, not to supervise.
 
@@ -17,7 +17,7 @@ Codex is a capable collaborator working the same problem you are, not a tool you
 - **It is more concise by default.** Brevity scaffolding ("be terse", "no filler") is mostly dead weight now. Delete it before adding anything.
 - **Leaner prompts score better.** OpenAI measured roughly 10-15% higher eval scores with 41-66% fewer tokens after trimming system prompts. Cutting a redundant rule is a quality change, not just a cost change.
 - **It is more proactive across multi-step work.** That calls for clear boundaries, not closer supervision: say what the run is authorized to do and when to stop, then stay out of the way.
-- **Reasoning effort defaults to `medium` when unset.** Leave `--effort` alone unless the user asks for something specific.
+- **Do not reach for reasoning effort as a fix.** The plugin sends `effort: null` when `--effort` is unset, so `model_reasoning_effort` from the user's `~/.codex/config.toml` decides (OpenAI's own default is `medium`, but the local config overrides it). Leave `--effort` alone unless the user asks for something specific; a tighter prompt buys more than a higher effort setting.
 
 ## Prompt shape
 
