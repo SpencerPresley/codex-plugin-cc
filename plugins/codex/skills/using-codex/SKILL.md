@@ -68,7 +68,7 @@ You can invoke these yourself:
 Prefer `/codex:status <id> --wait --timeout-ms <ms>` over polling: one blocking call beats a poll loop. The status output names the job's log file, which is written line-by-line while the run is in flight — read it if you need to see what Codex is doing mid-run.
 
 These stay user-only, so route the user instead of invoking them:
-- `/codex:cancel [id]` — stops a running job and throws away in-flight work.
+- `/codex:cancel [id]` — stops a running job and throws away in-flight work. With no id it reports each running job with the cost of cancelling it before anything is killed.
 - `/codex:transfer` — hands the user's Claude session to Codex.
 
 Jobs are tracked per workspace (max 50 retained). The default `/codex:status` view is scoped to the current Claude session; `--all` shows every retained job. Results survive the session that produced them — a job that was still running when a session ended is recorded as `interrupted`, not deleted. If a job id cannot be found, the error names the other plugin-install store it lives in rather than implying the run is gone.

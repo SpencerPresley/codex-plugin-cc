@@ -219,7 +219,9 @@ Examples:
 
 ### `/codex:cancel`
 
-Cancels an active background Codex job. This one stays user-only: it throws away in-flight work, so Claude will route you here rather than cancelling on its own.
+Stops a Codex job started in this Claude session. With no job id it walks every running job first — what the job is for, how long it has been going, what cancelling costs, and a cancel/don't-cancel recommendation — so the call is made against the consequences rather than a bare id. A job this session launched is stopped by stopping its background shell; for any other id it falls back to the `cancel` helper, and it asks before doing that.
+
+This one stays user-only: it throws away in-flight work, so Claude routes you here rather than cancelling on its own.
 
 Examples:
 

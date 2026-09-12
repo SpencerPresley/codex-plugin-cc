@@ -1,5 +1,6 @@
 ---
-description: Cancel an active background Codex job in this repository
+name: cancel
+description: Stop a Codex job started in this Claude session, or — given no job id — report each running job with what cancelling it would cost and a recommendation before anything is killed
 argument-hint: '[job-id]'
 disable-model-invocation: true
 ---

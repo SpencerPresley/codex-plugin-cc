@@ -92,7 +92,6 @@ test("continue is not exposed as a user-facing command", () => {
   const commandFiles = fs.readdirSync(path.join(PLUGIN_ROOT, "commands")).sort();
   assert.deepEqual(commandFiles, [
     "adversarial-review.md",
-    "cancel.md",
     "result.md",
     "review.md",
     "status.md",
@@ -176,13 +175,14 @@ test("transfer and cancel stay user-only while status and result are model-invok
   const transfer = read("commands/transfer.md");
   const result = read("commands/result.md");
   const status = read("commands/status.md");
-  const cancel = read("commands/cancel.md");
+  const cancel = read("skills/cancel/SKILL.md");
   const resultHandling = read("skills/codex-result-handling/SKILL.md");
 
   // Cancel throws away in-flight work and transfer hands the user's own session
   // to another agent: both stay the user's call.
   assert.match(transfer, /disable-model-invocation:\s*true/);
   assert.match(cancel, /disable-model-invocation:\s*true/);
+  assert.match(cancel, /^name: cancel$/m);
 
   // Claude can launch a background job, so it must be able to follow that job to
   // completion instead of handing the user a job id and going quiet.
@@ -195,7 +195,11 @@ test("transfer and cancel stay user-only while status and result are model-invok
   assert.match(transfer, /codex resume <session-id>/);
   assert.match(result, /codex-companion\.mjs" result "\$ARGUMENTS"/);
   assert.match(status, /codex-companion\.mjs" status "\$ARGUMENTS"/);
-  assert.match(cancel, /codex-companion\.mjs" cancel "\$ARGUMENTS"/);
+  // The helper is the fallback for a job this session did not launch; a job it
+  // did launch is stopped by stopping its background shell.
+  assert.match(cancel, /codex-companion\.mjs" cancel "<job-id>"/);
+  assert.match(cancel, /StopTask/);
+  assert.match(cancel, /Cancellation Consequences and Recommendation/);
   assert.match(resultHandling, /do not turn a failed or incomplete Codex run into a Claude-side implementation attempt/i);
   assert.match(resultHandling, /if Codex was never successfully invoked, do not generate a substitute answer at all/i);
 });
