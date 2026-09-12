@@ -4,7 +4,8 @@
 
 Context cost:
 
-- `/codex:rescue` is now a single user-invoked skill (`skills/rescue/SKILL.md`). The `codex:codex-rescue` subagent and the `codex-cli-runtime` skill are gone: the main session builds the one `codex-companion.mjs task` call itself, so the forwarding contract and the flag mapping live in one file instead of three. Transcript evidence for the collapse: the subagent was dispatched zero times across every recorded session, while 71 `codex-companion.mjs task` calls came straight from main threads.
+- **`/codex:rescue` is now `/codex:task`**, a single user-invoked skill (`skills/task/SKILL.md`). The `codex:codex-rescue` subagent and the `codex-cli-runtime` skill are gone: the main session builds the one `codex-companion.mjs task` call itself, so the forwarding contract and the flag mapping live in one file instead of three. Transcript evidence for the collapse: the subagent was dispatched zero times across every recorded session, while 71 `codex-companion.mjs task` calls came straight from main threads.
+- The rename ends a vocabulary split — the command was always `codex-companion.mjs task` under a "rescue" label. `/codex:status` and `/codex:result` now label new jobs `task` as well; jobs recorded before this release keep their stored `rescue` label.
 - That also retires the `#234` recursion class by construction — there is no command → `Agent` → `Skill` path left to re-enter.
 - `/codex:rescue` carries `disable-model-invocation`, so it stays out of Claude's context until the user types it. Claude can suggest a handoff; it can no longer start one, and neither can a subagent.
 - `codex-prompting` swaps `user-invocable: false` for `disable-model-invocation: true`: still on disk and still runnable as `/codex:codex-prompting`, but no longer occupying a listing slot in every session. `codex:using-codex` keeps the condensed prompting guidance Claude actually works from.

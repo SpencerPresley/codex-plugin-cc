@@ -529,7 +529,7 @@ test("task --resume-last resumes the latest persisted task thread", () => {
   assert.equal(result.stdout, "Resumed the prior run.\nFollow-up prompt accepted.\n");
 });
 
-test("task-resume-candidate returns the latest rescue thread from the current session", () => {
+test("task-resume-candidate returns the latest task thread from the current session", () => {
   const workspace = makeTempDir();
   const stateDir = resolveStateDir(workspace);
   const jobsDir = path.join(stateDir, "jobs");
@@ -559,7 +559,7 @@ test("task-resume-candidate returns the latest rescue thread from the current se
             jobClass: "task",
             sessionId: "sess-other",
             threadId: "thr_other",
-            summary: "Old rescue run",
+            summary: "Old task run",
             updatedAt: "2026-03-24T20:05:00.000Z"
           },
           {
@@ -741,7 +741,7 @@ test("write task output focuses on the Codex result without generic follow-up hi
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "Handled the requested task.\nTask prompt accepted.\n");
   const state = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
-  // A write-capable rescue inherits the user's own Codex sandbox configuration:
+  // A write-capable task inherits the user's own Codex sandbox configuration:
   // the plugin sends no override at all rather than narrowing it to
   // workspace-write, which blocks the network the fix usually needs.
   assert.equal(Object.prototype.hasOwnProperty.call(state.lastThreadStart, "sandbox"), false);

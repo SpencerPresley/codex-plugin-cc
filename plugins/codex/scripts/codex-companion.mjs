@@ -251,7 +251,7 @@ const SANDBOX_MODES = ["read-only", "workspace-write", "danger-full-access", "in
 /**
  * `inherit` (and the write-capable default) resolve to `null`, which tells the
  * app-server layer to send no sandbox override at all. The plugin should not
- * quietly narrow what the user already configured for Codex; a rescue that can
+ * quietly narrow what the user already configured for Codex; a task that can
  * write but cannot reach the network fails at `npm ci` for no stated reason.
  */
 function normalizeSandboxMode(value) {
@@ -697,7 +697,7 @@ function getJobKindLabel(kind, jobClass) {
   if (kind === "adversarial-review") {
     return "adversarial-review";
   }
-  return jobClass === "review" ? "review" : "rescue";
+  return jobClass === "review" ? "review" : "task";
 }
 
 function createCompanionJob({ prefix, kind, title, workspaceRoot, jobClass, summary, write = false }) {

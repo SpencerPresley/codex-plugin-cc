@@ -1,6 +1,6 @@
 ---
-name: rescue
-description: Delegate investigation, an explicit fix request, or follow-up rescue work to Codex
+name: task
+description: Hand investigation, an explicit fix request, or follow-up work to Codex
 argument-hint: "[--background|--wait] [--resume|--fresh] [--with-session] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [what Codex should investigate, solve, or continue]"
 disable-model-invocation: true
 ---
@@ -14,7 +14,7 @@ $ARGUMENTS
 
 Codex does the thinking. Yours is to make sure it starts with everything this session already knows, and to relay its answer without distortion.
 
-- Make exactly one `Bash` call: `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task ...`. One `task` invocation per rescue handoff.
+- Make exactly one `Bash` call: `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task ...`. One `task` invocation per handoff.
 - Return that command's stdout exactly as-is. Do not paraphrase, summarize, rewrite, or add commentary before or after it.
 - Do not do the work yourself: no repository inspection to form your own theory, no drafting a solution, no independent analysis beyond shaping the prompt and the handoff context.
 - If the Bash call fails or Codex cannot be invoked, say so and stop — do not substitute your own answer.
@@ -32,7 +32,7 @@ You may attach what this session already established — the failing command and
 ## Resume check
 
 - If the request includes `--resume` or `--fresh`, do not ask whether to continue. The user already chose.
-- Otherwise, before starting Codex, check for a resumable rescue thread from this Claude session by running:
+- Otherwise, before starting Codex, check for a resumable Codex thread from this Claude session by running:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task-resume-candidate --json

@@ -1,6 +1,6 @@
 ---
 name: using-codex
-description: Use when running Codex reviews or delegating work through the Codex Claude Code plugin, especially when choosing review, adversarial-review, or rescue and when handling their results.
+description: Use when running Codex reviews or delegating work through the Codex Claude Code plugin, especially when choosing review, adversarial-review, or task and when handling their results.
 ---
 
 # Using Codex from Claude Code
@@ -8,7 +8,7 @@ description: Use when running Codex reviews or delegating work through the Codex
 Codex is a second AI collaborator from another model family. Two shapes of use:
 
 - **Review** (`review`, `adversarial-review`) — repository-preserving critique that does not intentionally edit or fix the reviewed work.
-- **Delegate** (`rescue`) — **write-capable** work handed to Codex (debug, fix, implement, investigate). User-invoked only.
+- **Delegate** (`task`) — **write-capable** work handed to Codex (debug, fix, implement, investigate). User-invoked only.
 
 In *this* build the review commands are model-invokable, so you (Claude) can run them directly.
 
@@ -17,8 +17,8 @@ In *this* build the review commands are model-invokable, so you (Claude) can run
 ## Critical rules (non-negotiable)
 
 - **Reviews are repository-preserving, not filesystem read-only.** Codex runs without filesystem sandboxing so it can use its full toolset. It must not intentionally edit or fix the reviewed work, but legitimate inspection and verification commands may create caches, logs, build output, coverage data, or scratch probes. Those incidental writes are acceptable and are not a reason to panic, abandon the review, or silently implement cleanup. After presenting findings, STOP and ask the user which findings, if any, to fix.
-- **Return Codex output verbatim.** No paraphrasing or summarizing of review/rescue output. Present findings ordered by severity, with file paths and line numbers exactly as reported. You may append one `## Claude's assessment` section *after* the verbatim block — see "Assessing the review" below.
-- **Know what intentionally writes.** `rescue` is write-capable and may edit the workspace. `review` and `adversarial-review` must not intentionally change reviewed files, configuration, the Git index, refs, or commits.
+- **Return Codex output verbatim.** No paraphrasing or summarizing of review or task output. Present findings ordered by severity, with file paths and line numbers exactly as reported. You may append one `## Claude's assessment` section *after* the verbatim block — see "Assessing the review" below.
+- **Know what intentionally writes.** `task` is write-capable and may edit the workspace. `review` and `adversarial-review` must not intentionally change reviewed files, configuration, the Git index, refs, or commits.
 - **Don't improvise auth.** If Codex isn't set up/authenticated, send the user to `/codex:setup`.
 
 Review commands may use a dedicated temporary directory for probes. Repo-native checks may also run in the repository when that produces better evidence, even if they leave incidental artifacts such as `.ruff_cache/`. Do not run commands intended to rewrite reviewed work, such as `ruff check --fix`, `ruff format`, snapshot updates, codemods, or lockfile-updating package-manager operations.
@@ -38,16 +38,16 @@ Same targets + `--base`, but it **attacks the approach/design/tradeoffs/assumpti
 - Use for: pre-ship pressure-testing — is this the right design? what breaks under load/partial-failure/rollback?
 - Examples: `/codex:adversarial-review`, `/codex:adversarial-review --base main challenge the retry + caching design`.
 
-### `/codex:rescue` — delegate write-capable work (user-invoked only)
+### `/codex:task` — delegate write-capable work (user-invoked only)
 Hands a task to Codex (debug, fix, implement, investigate, or continue prior Codex work). **The user runs it; you cannot** — it carries `disable-model-invocation`, so it never appears in your skill list and the `Skill` tool refuses it. When a handoff would help, say so and let the user type it. Once they do, the command body runs in this session: you build one `codex-companion.mjs task` call and return its stdout verbatim.
 - Flags: `--background` | `--wait`, `--resume` | `--fresh`, `--model <name|spark>`, `--effort <none|minimal|low|medium|high|xhigh>`.
 - **Write-capable by default.** Worth suggesting for substantial, clearly-bounded handoffs; not for quick tasks you can finish yourself.
 - `--model`/`--effort`: leave unset unless the user asks (Codex picks sane defaults). `spark` → `gpt-5.3-codex-spark`. Any other model name passes through.
-- `--resume` continues the latest rescue thread in this repo; `--fresh` forces a new one.
+- `--resume` continues the latest Codex thread in this repo; `--fresh` forces a new one.
 - `--with-session` imports the current Claude session into the Codex thread first, so Codex starts from the actual investigation instead of a one-line restatement. Use it when the task depends on the conversation so far; it cannot be combined with `--resume`.
-- Sandbox: a write-capable rescue inherits the user's own Codex configuration rather than a narrower plugin-chosen one, so it can run the build, the tests, and the network calls a fix usually needs.
+- Sandbox: a write-capable task inherits the user's own Codex configuration rather than a narrower plugin-chosen one, so it can run the build, the tests, and the network calls a fix usually needs.
 - Return the companion's stdout verbatim.
-- Examples: `/codex:rescue investigate why the integration test is flaky`, `/codex:rescue --model spark fix the failing test`, `/codex:rescue --resume apply the top fix`.
+- Examples: `/codex:task investigate why the integration test is flaky`, `/codex:task --model spark fix the failing test`, `/codex:task --resume apply the top fix`.
 
 ### `codex:setup` — readiness + review gate
 Checks Codex CLI install/auth. Can toggle the optional **stop-time review gate** (`--enable-review-gate` / `--disable-review-gate`) — when on, a `Stop` hook runs a Codex review of the previous turn and can block stopping until issues are addressed. The gate can create a long Claude↔Codex loop and burn usage; only enable it when actively watching.
@@ -86,7 +86,7 @@ Both review commands return JSON against a fixed schema:
 
 Present findings severity-ordered; preserve confidence and any "inference/uncertainty" markers Codex includes.
 
-## Prompting Codex (when shaping a rescue prompt)
+## Prompting Codex (when shaping a task prompt)
 
 Codex responds best to compact, XML-block prompts. GPT-5.6 is concise and proactive by default, so state the goal, the success criteria, and the boundaries — then stop. Assemble only the blocks the task needs:
 

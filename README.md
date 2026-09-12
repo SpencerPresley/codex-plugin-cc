@@ -15,7 +15,7 @@ It is not an official OpenAI marketplace. This fork keeps local workflow edits, 
 
 - `/codex:review` for a normal read-only Codex review
 - `/codex:adversarial-review` for a steerable challenge review
-- `/codex:rescue`, `/codex:transfer`, `/codex:status`, `/codex:result`, and `/codex:cancel` to delegate work, hand off sessions, and manage background jobs
+- `/codex:task`, `/codex:transfer`, `/codex:status`, `/codex:result`, and `/codex:cancel` to delegate work, hand off sessions, and manage background jobs
 
 ## Requirements
 
@@ -126,11 +126,11 @@ Examples:
 
 This command is repository-preserving: it runs Codex without filesystem sandboxing but does not intentionally edit or fix the reviewed work. It may tolerate incidental tool output or use a temporary directory for scratch probes, but it does not run commands whose purpose is to rewrite reviewed code.
 
-### `/codex:rescue`
+### `/codex:task`
 
 Hands a task to Codex. The command runs in your main session: Claude builds one `codex-companion.mjs task` call, hands over the request plus whatever the session already established, and returns Codex's output verbatim.
 
-This command is **user-invoked only** (`disable-model-invocation`), so Claude cannot start a Codex rescue on its own and the command stays out of Claude's context until you type it. Claude can suggest a handoff; you decide.
+This command is **user-invoked only** (`disable-model-invocation`), so Claude cannot start a Codex task on its own and the command stays out of Claude's context until you type it. Claude can suggest a handoff; you decide.
 
 Use it when you want Codex to:
 
@@ -142,22 +142,22 @@ Use it when you want Codex to:
 > [!NOTE]
 > Depending on the task and the model you choose these tasks might take a long time, so `--background` is generally recommended: the companion enqueues the run, prints a job id, and you follow up with `/codex:status` and `/codex:result`.
 
-It supports `--background`, `--wait`, `--resume`, `--fresh`, and `--with-session`. If you omit `--resume` and `--fresh`, the plugin can offer to continue the latest rescue thread for this repo.
+It supports `--background`, `--wait`, `--resume`, `--fresh`, and `--with-session`. If you omit `--resume` and `--fresh`, the plugin can offer to continue the latest Codex thread for this repo.
 
 `--with-session` imports the current Claude session into the Codex thread before the task runs, so Codex starts from the actual investigation — the failing command, what was already ruled out — instead of a one-line restatement of it. It cannot be combined with `--resume`, because a resumed Codex thread already carries its own history.
 
-A write-capable rescue inherits the sandbox from your own Codex configuration rather than a narrower one chosen by the plugin, so it can run the build, the test suite, and any network calls the fix needs. Pass `--sandbox read-only|workspace-write|danger-full-access|inherit` to pin a specific level for one run. `--write` and `--sandbox read-only` contradict each other and are rejected rather than silently resolved; a sandbox that permits writes makes the run write-capable in its own right.
+A write-capable task inherits the sandbox from your own Codex configuration rather than a narrower one chosen by the plugin, so it can run the build, the test suite, and any network calls the fix needs. Pass `--sandbox read-only|workspace-write|danger-full-access|inherit` to pin a specific level for one run. `--write` and `--sandbox read-only` contradict each other and are rejected rather than silently resolved; a sandbox that permits writes makes the run write-capable in its own right.
 
 Examples:
 
 ```bash
-/codex:rescue investigate why the tests started failing
-/codex:rescue fix the failing test with the smallest safe patch
-/codex:rescue --resume apply the top fix from the last run
-/codex:rescue --effort medium investigate the flaky integration test
-/codex:rescue --model spark fix the issue quickly
-/codex:rescue --with-session fix the bug we have been tracing
-/codex:rescue --background investigate the regression
+/codex:task investigate why the tests started failing
+/codex:task fix the failing test with the smallest safe patch
+/codex:task --resume apply the top fix from the last run
+/codex:task --effort medium investigate the flaky integration test
+/codex:task --model spark fix the issue quickly
+/codex:task --with-session fix the bug we have been tracing
+/codex:task --background investigate the regression
 ```
 
 Asking Claude in prose ("ask Codex to redesign the database connection") no longer starts a run by itself — Claude will point you at the command, and you type it.
@@ -166,7 +166,7 @@ Asking Claude in prose ("ask Codex to redesign the database connection") no long
 
 - if you do not pass `--model` or `--effort`, Codex chooses its own defaults.
 - if you say `spark`, the plugin maps that to `gpt-5.3-codex-spark`
-- follow-up rescue requests can continue the latest Codex task in the repo
+- follow-up requests can continue the latest Codex task in the repo
 
 ### `/codex:transfer`
 
@@ -258,14 +258,14 @@ When the review gate is enabled, the plugin uses a `Stop` hook to run a targeted
 ### Hand A Problem To Codex
 
 ```bash
-/codex:rescue investigate why the build is failing in CI
+/codex:task investigate why the build is failing in CI
 ```
 
 ### Start Something Long-Running
 
 ```bash
 /codex:adversarial-review --background
-/codex:rescue --background investigate the flaky test
+/codex:task --background investigate the flaky test
 ```
 
 Then check in with:
@@ -288,7 +288,7 @@ model = "gpt-5.6-terra"
 model_reasoning_effort = "high"
 ```
 
-`sandbox_mode` is read from the same place. Reviews always run without filesystem sandboxing so the reviewer can run the checks it reasons about, but a write-capable `/codex:rescue` follows whatever you configured here rather than being narrowed by the plugin.
+`sandbox_mode` is read from the same place. Reviews always run without filesystem sandboxing so the reviewer can run the checks it reasons about, but a write-capable `/codex:task` follows whatever you configured here rather than being narrowed by the plugin.
 
 Your configuration will be picked up based on:
 
