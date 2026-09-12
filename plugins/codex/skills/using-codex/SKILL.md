@@ -35,6 +35,7 @@ Reviews local git state.
 
 ### `codex:adversarial-review` — challenge review (repository-preserving)
 Same targets + `--base`, but it **attacks the approach/design/tradeoffs/assumptions** ("break confidence in the change"), not just defects.
+- **Always launch it as a background Bash task**, and don't ask which mode to use. To report in-turn anyway, block with `/codex:status <id> --wait --timeout-ms <ms>` then `/codex:result <id>`.
 - **Unlike `review`, it accepts extra focus text** after the flags.
 - Use for: pre-ship pressure-testing — is this the right design? what breaks under load/partial-failure/rollback?
 - Examples: `/codex:adversarial-review`, `/codex:adversarial-review --base main challenge the retry + caching design`.
@@ -55,8 +56,8 @@ Checks Codex CLI install/auth. Point the user at it; you cannot run it. Can togg
 
 ## Background vs foreground
 
-- **Wait** (`--wait`) only when the review is clearly tiny (~1–2 files, no directory-sized change).
-- **Background** (`--background`) for anything larger or unclear in size — reviews of multi-file changes take a while.
+- `codex:review` offers the choice: **wait** (`--wait`) only when the review is clearly tiny (~1–2 files, no directory-sized change), **background** (`--background`) for anything larger or unclear in size.
+- `codex:adversarial-review` has no choice to make — always run it as a background task.
 - After backgrounding, the **user** follows up with the user-only commands below.
 
 ## Following up on a background job

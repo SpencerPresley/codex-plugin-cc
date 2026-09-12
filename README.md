@@ -107,8 +107,9 @@ Runs a **steerable** review that questions the chosen implementation and design.
 
 It can be used to pressure-test assumptions, tradeoffs, failure modes, and whether a different approach would have been safer or simpler.
 
-It uses the same review target selection as `/codex:review`, including `--base <ref>` for branch review.
-It also supports `--wait` and `--background`. Unlike `/codex:review`, it can take extra focus text after the flags.
+It uses the same review target selection as `/codex:review`, including `--base <ref>` for branch review. Unlike `/codex:review`, it can take extra focus text after the flags.
+
+It **always runs in the background** as a Claude Code background task, with nothing to answer before it starts. A challenge review reads the diff, the surrounding code, and often runs checks, so waiting on it buys nothing. Follow it with `/codex:status` and `/codex:result`.
 
 Use it when you want:
 
@@ -121,7 +122,7 @@ Examples:
 ```bash
 /codex:adversarial-review
 /codex:adversarial-review --base main challenge whether this was the right caching and retry design
-/codex:adversarial-review --background look for race conditions and question the chosen approach
+/codex:adversarial-review look for race conditions and question the chosen approach
 ```
 
 This command is repository-preserving: it runs Codex without filesystem sandboxing but does not intentionally edit or fix the reviewed work. It may tolerate incidental tool output or use a temporary directory for scratch probes, but it does not run commands whose purpose is to rewrite reviewed code.
@@ -266,7 +267,7 @@ When the review gate is enabled, the plugin uses a `Stop` hook to run a targeted
 ### Start Something Long-Running
 
 ```bash
-/codex:adversarial-review --background
+/codex:adversarial-review
 /codex:task --background investigate the flaky test
 ```
 

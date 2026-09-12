@@ -39,33 +39,43 @@ test("review command uses AskUserQuestion and background Bash while staying revi
   assert.match(source, /does not support staged-only review, unstaged-only review, or extra focus text/i);
 });
 
-test("adversarial review command uses AskUserQuestion and background Bash while staying review-only", () => {
-  const source = read("commands/adversarial-review.md");
-  assert.match(source, /AskUserQuestion/);
-  assert.match(source, /\bBash\(/);
+test("adversarial review is a model-invokable skill that always backgrounds while staying review-only", () => {
+  const source = read("skills/adversarial-review/SKILL.md");
+  assert.match(source, /^name: adversarial-review$/m);
+  // Always background, so no execution-mode question and no wait/background
+  // flags to parse. Model-invokable: no disable-model-invocation.
+  assert.equal(/allowed-tools/.test(source), false);
+  assert.equal(/disable-model-invocation/.test(source), false);
+  assert.equal(/AskUserQuestion/.test(source), false);
+  assert.match(source, /argument-hint: '\[--base <ref>\] \[--scope auto\|working-tree\|branch\] \[focus \.\.\.\]'/);
+  assert.match(source, /Always launch it as a background Bash task/i);
+  // The helper parses --wait/--background for reviews and then ignores them, so
+  // the skill must not mention flags that do nothing. `/codex:status --wait` is
+  // a different command's real flag and stays.
+  assert.equal(/--background/.test(source), false);
+  for (const line of source.split("\n").filter((l) => l.includes("--wait"))) {
+    assert.match(line, /\/codex:status/, `stray --wait outside /codex:status: ${line}`);
+  }
+
   assert.match(source, /Do not fix issues/i);
   assert.match(source, /review-only/i);
   assert.match(source, /return Codex's output verbatim to the user/i);
-  assert.match(source, /```bash/);
   assert.match(source, /```typescript/);
   assert.match(source, /adversarial-review "\$ARGUMENTS"/);
-  assert.match(source, /\[--scope auto\|working-tree\|branch\] \[focus \.\.\.\]/);
   assert.match(source, /run_in_background:\s*true/);
   assert.match(source, /command:\s*`node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/codex-companion\.mjs" adversarial-review "\$ARGUMENTS"`/);
   assert.match(source, /description:\s*"Codex adversarial review"/);
   assert.match(source, /Do not call `BashOutput`/);
   assert.match(source, /Return the command stdout verbatim, exactly as-is/i);
+
+  // The emptiness guard survives the removal of the sizing question: auto scope
+  // falls back to a branch diff on a clean tree, so nothing stops an empty run.
   assert.match(source, /git status --short --untracked-files=all/);
   assert.match(source, /git diff --shortstat/);
   assert.match(source, /Treat untracked files or directories as reviewable work/i);
-  assert.match(source, /Recommend waiting only when the scoped review is clearly tiny, roughly 1-2 files total/i);
-  assert.match(source, /In every other case, including unclear size, recommend background/i);
-  assert.match(source, /The companion script parses `--wait` and `--background`/i);
-  assert.match(source, /Claude Code's `Bash\(..., run_in_background: true\)` is what actually detaches the run/i);
   assert.match(source, /When in doubt, run the review/i);
-  assert.match(source, /\(Recommended\)/);
-  assert.match(source, /uses the same review target selection as `\/codex:review`/i);
-  assert.match(source, /supports working-tree review, branch review, and `--base <ref>`/i);
+
+  assert.match(source, /uses the same target selection as `\/codex:review`/i);
   assert.match(source, /does not support `--scope staged` or `--scope unstaged`/i);
   assert.match(source, /can still take extra focus text after the flags/i);
 });
@@ -91,7 +101,6 @@ test("review documentation describes the unsandboxed repository-preserving contr
 test("continue is not exposed as a user-facing command", () => {
   const commandFiles = fs.readdirSync(path.join(PLUGIN_ROOT, "commands")).sort();
   assert.deepEqual(commandFiles, [
-    "adversarial-review.md",
     "result.md",
     "review.md",
     "status.md",
@@ -208,7 +217,7 @@ test("review results can be contested by Claude without being edited", () => {
   const resultHandling = read("skills/codex-result-handling/SKILL.md");
   const usingCodex = read("skills/using-codex/SKILL.md");
   const review = read("commands/review.md");
-  const adversarial = read("commands/adversarial-review.md");
+  const adversarial = read("skills/adversarial-review/SKILL.md");
 
   for (const source of [review, adversarial]) {
     // The verbatim block still comes first and untouched; the assessment is
