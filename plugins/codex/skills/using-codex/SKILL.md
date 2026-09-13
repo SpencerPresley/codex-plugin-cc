@@ -30,13 +30,13 @@ Review commands may use a dedicated temporary directory for probes. Repo-native 
 Reviews local git state.
 - Flags: `--base <ref>`, `--scope auto|working-tree|branch`.
 - No focus text, no staged-only/unstaged-only.
-- **Always launch it as a background Bash task**, and don't ask which mode to use. To report in-turn anyway, block with `/codex:status <id> --wait --timeout-ms <ms>` then `/codex:result <id>`.
+- **Always launch it as a background Bash task**, and don't ask which mode to use.
 - Use for: a straight defect review of uncommitted changes (`--scope working-tree`) or a branch vs base (`--base main`).
 - Examples: `/codex:review`, `/codex:review --base main`, `/codex:review --scope working-tree`.
 
 ### `codex:adversarial-review` — challenge review (repository-preserving)
 Same targets + `--base`, but it **attacks the approach/design/tradeoffs/assumptions** ("break confidence in the change"), not just defects.
-- **Always launch it as a background Bash task**, and don't ask which mode to use. To report in-turn anyway, block with `/codex:status <id> --wait --timeout-ms <ms>` then `/codex:result <id>`.
+- **Always launch it as a background Bash task**, and don't ask which mode to use.
 - **Unlike `review`, it accepts extra focus text** after the flags.
 - Use for: pre-ship pressure-testing — is this the right design? what breaks under load/partial-failure/rollback?
 - Examples: `/codex:adversarial-review`, `/codex:adversarial-review --base main challenge the retry + caching design`.
@@ -55,11 +55,12 @@ Hands a task to Codex (debug, fix, implement, investigate, or continue prior Cod
 ### `/codex:setup` — readiness + review gate (user-invoked only)
 Checks Codex CLI install/auth. Point the user at it; you cannot run it. Can toggle the optional **stop-time review gate** (`--enable-review-gate` / `--disable-review-gate`) — when on, a `Stop` hook runs a Codex review of the previous turn and can block stopping until issues are addressed. The gate can create a long Claude↔Codex loop and burn usage; only enable it when actively watching.
 
-## Background always
+## Background always, then two ways to collect
 
 - Both reviews always run as background Bash tasks. There is no wait-vs-background decision and nothing to ask the user before starting one.
-- To report findings in the same turn, block on the job rather than polling: `/codex:status <id> --wait --timeout-ms <ms>`, then `/codex:result <id>`.
-- Otherwise hand off: tell the user it started and point them at `/codex:status`.
+- **Wait on it** when something depends on the findings — iterating until a branch is clean, or the user asked for the review inline. Block rather than poll: `/codex:status <id> --wait --timeout-ms <ms>`, then `/codex:result <id>`.
+- **Hand it off** when nobody is waiting: say it started and point the user at `/codex:status`.
+- Which one applies follows the request you were given; neither is the default, and a review nobody collects is wasted usage.
 
 ## Following up on a background job
 

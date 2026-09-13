@@ -35,7 +35,7 @@ test("review is a model-invokable skill that always backgrounds and keeps the ru
     assert.match(line, /\/codex:status/, `stray --wait outside /codex:status: ${line}`);
   }
   assert.match(source, /argument-hint: '\[--base <ref>\] \[--scope auto\|working-tree\|branch\]'/);
-  assert.match(source, /Always launch it as a background Bash task/i);
+  assert.match(source, /Always launch as a background Bash task/i);
 
   // The run is repository-preserving; what the caller does with the findings is
   // deliberately not this skill's business (it cannot see the caller's intent).
@@ -46,8 +46,13 @@ test("review is a model-invokable skill that always backgrounds and keeps the ru
   assert.match(source, /run_in_background:\s*true/);
   assert.match(source, /command:\s*`node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/codex-companion\.mjs" review "\$ARGUMENTS"`/);
   assert.match(source, /description:\s*"Codex review"/);
-  assert.match(source, /Do not call `BashOutput`/);
-  assert.match(source, /Return the command stdout verbatim, exactly as-is/i);
+  // Always-background means there is no foreground stdout to quote; the artifact
+  // is the review output, read from the job or from /codex:result.
+  assert.match(source, /Return the review output verbatim, exactly as-is, whether you read it from the job or from `\/codex:result`/);
+  // Neither getting-the-result path may be stated as the default: waiting vs
+  // handing off depends on what the caller was asked to do.
+  assert.match(source, /Which of those applies follows the request you were given. Neither is the default/);
+  assert.match(source, /Do not poll `BashOutput` in a loop/);
 
   // The emptiness guard survives the removal of the sizing question.
   assert.match(source, /git status --short --untracked-files=all/);
@@ -55,7 +60,9 @@ test("review is a model-invokable skill that always backgrounds and keeps the ru
   assert.match(source, /Treat untracked files or directories as reviewable work/i);
   assert.match(source, /When in doubt, run the review/i);
 
-  assert.match(source, /does not support staged-only review, unstaged-only review, or extra focus text/i);
+  assert.match(source, /no staged-only review, no unstaged-only review, no focus text/i);
+  // Switching skills is Claude's job, not a message to relay to the user.
+  assert.match(source, /switch to it yourself rather than telling the user to/);
 });
 
 test("adversarial review is a model-invokable skill that always backgrounds and keeps the run repo-preserving", () => {
@@ -75,7 +82,7 @@ test("adversarial review is a model-invokable skill that always backgrounds and 
   assert.match(source, /a user-typed invocation puts a `<command-name>` block for this skill in the turn/);
   assert.match(source, /Focus text counts as arguments/);
   assert.match(source, /\(Recommended\)/);
-  assert.match(source, /Always launch it as a background Bash task/i);
+  assert.match(source, /Always launch as a background Bash task/i);
   // The helper parses --wait/--background for reviews and then ignores them, so
   // the skill must not mention flags that do nothing. `/codex:status --wait` is
   // a different command's real flag and stays.
@@ -93,8 +100,13 @@ test("adversarial review is a model-invokable skill that always backgrounds and 
   assert.match(source, /run_in_background:\s*true/);
   assert.match(source, /command:\s*`node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/codex-companion\.mjs" adversarial-review "\$ARGUMENTS"`/);
   assert.match(source, /description:\s*"Codex adversarial review"/);
-  assert.match(source, /Do not call `BashOutput`/);
-  assert.match(source, /Return the command stdout verbatim, exactly as-is/i);
+  // Always-background means there is no foreground stdout to quote; the artifact
+  // is the review output, read from the job or from /codex:result.
+  assert.match(source, /Return the review output verbatim, exactly as-is, whether you read it from the job or from `\/codex:result`/);
+  // Neither getting-the-result path may be stated as the default: waiting vs
+  // handing off depends on what the caller was asked to do.
+  assert.match(source, /Which of those applies follows the request you were given. Neither is the default/);
+  assert.match(source, /Do not poll `BashOutput` in a loop/);
 
   // The emptiness guard survives the removal of the sizing question: auto scope
   // falls back to a branch diff on a clean tree, so nothing stops an empty run.
@@ -103,9 +115,9 @@ test("adversarial review is a model-invokable skill that always backgrounds and 
   assert.match(source, /Treat untracked files or directories as reviewable work/i);
   assert.match(source, /When in doubt, run the review/i);
 
-  assert.match(source, /uses the same target selection as `\/codex:review`/i);
+  assert.match(source, /takes the same targets as `codex:review`/i);
   assert.match(source, /does not support `--scope staged` or `--scope unstaged`/i);
-  assert.match(source, /can still take extra focus text after the flags/i);
+  assert.match(source, /Preserve the user's focus text as written/i);
 });
 
 test("review documentation describes the unsandboxed repository-preserving contract", () => {
@@ -249,7 +261,7 @@ test("review results can be contested by Claude, and acting on them is the calle
   for (const source of [review, adversarial]) {
     // The verbatim block still comes first and untouched; the assessment is
     // additive, not a rewrite.
-    assert.match(source, /Return the command stdout verbatim, exactly as-is/);
+    assert.match(source, /Return the review output verbatim, exactly as-is/);
     assert.match(source, /Claude's assessment/);
     assert.match(source, /never before it and never interleaved/i);
   }
