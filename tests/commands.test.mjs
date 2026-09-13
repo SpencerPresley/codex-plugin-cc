@@ -142,12 +142,30 @@ test("review documentation describes the unsandboxed repository-preserving contr
   assert.doesNotMatch(readme, /This command is read-only/i);
 });
 
-test("continue is not exposed as a user-facing command", () => {
-  const commandFiles = fs.readdirSync(path.join(PLUGIN_ROOT, "commands")).sort();
-  assert.deepEqual(commandFiles, [
-    "status.md",
-    "transfer.md"
+test("every surface is a skill, and continue is not exposed at all", () => {
+  // commands/ is gone: a command and a skill are the same mechanism, so one
+  // directory is enough. `continue` stays internal to the task helper.
+  assert.equal(fs.existsSync(path.join(PLUGIN_ROOT, "commands")), false);
+  const skills = fs.readdirSync(path.join(PLUGIN_ROOT, "skills")).sort();
+  assert.deepEqual(skills, [
+    "adversarial-review",
+    "cancel",
+    "codex-prompting",
+    "codex-result-handling",
+    "result",
+    "review",
+    "setup",
+    "status",
+    "task",
+    "transfer",
+    "using-codex"
   ]);
+  for (const skill of skills) {
+    assert.ok(
+      fs.existsSync(path.join(PLUGIN_ROOT, "skills", skill, "SKILL.md")),
+      `${skill} is missing SKILL.md`
+    );
+  }
 });
 
 test("task is a single user-invoked skill that forwards to the task helper", () => {
@@ -223,14 +241,15 @@ test("task is a single user-invoked skill that forwards to the task helper", () 
 });
 
 test("status stays model-invokable while transfer, cancel, and result are user-only", () => {
-  const transfer = read("commands/transfer.md");
+  const transfer = read("skills/transfer/SKILL.md");
   const result = read("skills/result/SKILL.md");
-  const status = read("commands/status.md");
+  const status = read("skills/status/SKILL.md");
   const cancel = read("skills/cancel/SKILL.md");
   const resultHandling = read("skills/codex-result-handling/SKILL.md");
 
   // Cancel throws away in-flight work and transfer hands the user's own session
   // to another agent: both stay the user's call.
+  assert.match(transfer, /^name: transfer$/m);
   assert.match(transfer, /disable-model-invocation:\s*true/);
   assert.equal(/allowed-tools/.test(transfer), false);
   assert.match(cancel, /disable-model-invocation:\s*true/);
@@ -238,6 +257,7 @@ test("status stays model-invokable while transfer, cancel, and result are user-o
 
   // status is for looking in on a live run or listing older jobs; it is no longer
   // the collect path, so its blocking wait is a fallback rather than the norm.
+  assert.match(status, /^name: status$/m);
   assert.equal(/disable-model-invocation/.test(status), false);
   assert.equal(/allowed-tools/.test(status), false);
   assert.match(status, /You do not need this to collect its output/);

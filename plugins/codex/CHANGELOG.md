@@ -2,6 +2,10 @@
 
 ## 1.0.10
 
+Layout:
+
+- `plugins/codex/commands/` no longer exists. Every surface is a skill under `skills/`, because a command and a skill are the same mechanism in Claude Code: both are invokable by the `Skill` tool, both can be typed as `/codex:<name>`, both read `argument-hint` and `$ARGUMENTS`, and `disable-model-invocation` governs model access in either directory. Keeping two directories for one mechanism only made it easy for the two halves to drift, which is what the rest of this release spent its time undoing.
+
 Context cost:
 
 - **`/codex:rescue` is now `/codex:task`**, a single user-invoked skill (`skills/task/SKILL.md`). The `codex:codex-rescue` subagent and the `codex-cli-runtime` skill are gone: the main session builds the one `codex-companion.mjs task` call itself, so the forwarding contract and the flag mapping live in one file instead of three. Transcript evidence for the collapse: the subagent was dispatched zero times across every recorded session, while 71 `codex-companion.mjs task` calls came straight from main threads.
