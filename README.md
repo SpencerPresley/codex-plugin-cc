@@ -70,7 +70,7 @@ After install, you should see:
 One simple first run is:
 
 ```bash
-/codex:review --background
+/codex:review
 /codex:status
 /codex:result
 ```
@@ -89,17 +89,19 @@ Use it when you want:
 - a review of your current uncommitted changes
 - a review of your branch compared to a base branch like `main`
 
-Use `--base <ref>` for branch review. It also supports `--wait` and `--background`. It is not steerable and does not take custom focus text. Use [`/codex:adversarial-review`](#codexadversarial-review) when you want to challenge a specific decision or risk area.
+Use `--base <ref>` for branch review. It is not steerable and does not take custom focus text.
+
+It **always runs in the background** as a Claude Code background task, with nothing to answer before it starts. Follow it with `/codex:status` and `/codex:result`. Use [`/codex:adversarial-review`](#codexadversarial-review) when you want to challenge a specific decision or risk area.
 
 Examples:
 
 ```bash
 /codex:review
 /codex:review --base main
-/codex:review --background
+/codex:review --scope working-tree
 ```
 
-This command is repository-preserving: it runs Codex without filesystem sandboxing but does not intentionally edit or fix the reviewed work. Inspection and verification commands may create incidental caches, logs, build output, coverage data, or scratch probes in a temporary directory; those artifacts do not invalidate the review. When run in the background you can use [`/codex:status`](#codexstatus) to check on the progress and [`/codex:cancel`](#codexcancel) to cancel the ongoing task.
+This command is repository-preserving: it runs Codex without filesystem sandboxing but does not intentionally edit or fix the reviewed work. Inspection and verification commands may create incidental caches, logs, build output, coverage data, or scratch probes in a temporary directory; those artifacts do not invalidate the review. Use [`/codex:status`](#codexstatus) to check on progress and [`/codex:cancel`](#codexcancel) to stop a run.
 
 ### `/codex:adversarial-review`
 
