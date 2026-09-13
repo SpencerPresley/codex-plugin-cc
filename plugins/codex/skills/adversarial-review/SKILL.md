@@ -51,12 +51,17 @@ Bash({
 
 ## 4. Collect it when the notification arrives
 
-Backgrounding the `Bash` call gives you an output file path and a promise of a completion notification. That file ends up holding the fully rendered review, so collection is just a `Read`:
+Backgrounding the `Bash` call gives you an output file path and a promise of a completion notification. That file ends up holding the fully rendered review, along with the progress log that preceded it:
 
 - Do not poll. No `BashOutput` loop, no `/codex:status` polling, no blocking wait — the notification is the signal.
-- When it arrives, `Read` the output file named in the launch response.
-- The file opens with a handful of `[codex] ...` progress lines, then the rendered review beginning at its `# Codex ...` heading. The review is everything from that heading to the trailing `[exited with code N]` marker.
-- A non-zero exit code, or a file with progress lines and no rendered review, means the run failed. Report that and the most actionable lines from the file; do not reconstruct what the review would have said.
+- When it arrives, pull the review out of the output file rather than reading the file whole:
+
+```bash
+sed -n '/^# Codex /,$p' <output-file> | sed '/^\[exited with code/d'
+```
+
+  The file carries every `[codex] ...` progress line first, including the reviewer's full prompt with its `<review_workspace_policy>` block — around 2KB of echo before the review starts, plus a line per command Codex ran. On a trivial review that is 35 lines against the 6 you want. The rendered review runs from the `# Codex ...` heading to the trailing `[exited with code N]` marker.
+- Reading the whole file is worth it when something went wrong: a non-zero exit code, or progress lines with no rendered review, means the run failed, and the useful detail is in those lines. Report what the file says rather than reconstructing what the review would have said.
 - Nothing here needs a job id. `/codex:status` is for looking in on a run mid-flight or listing jobs from an earlier session, not for collecting this one.
 
 ## 5. Report

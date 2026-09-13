@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.13
+
+- Both review skills now extract the review from the background output file instead of reading it whole. The file leads with the reviewer's full prompt, including its `<review_workspace_policy>` block — about 2KB of echo before the review begins, plus a line per command Codex ran. Measured on a trivial review: 35 lines and 2691 characters in the file against 6 lines and 186 characters of actual review. Reading it whole is still the right move when the run failed, and the skills say so.
+- `codex:task` documents how to collect a `--background` run, which nothing previously explained. The launch prints both the job id and the live log path, so neither `/codex:status` nor a job-id hunt is needed: `result <job-id>` gives the answer plus the `codex resume` command, and the log gives the fuller picture — including the commands Codex ran, which the stored result does not keep.
+- `/codex:result` loses its `!` shell preamble. It substituted `$ARGUMENTS` into a shell argument before the model saw anything, so typing `/codex:result <an English sentence>` ran `result "<first word>"` and failed on a nonexistent job id. The command is now written out with the two things that decide whether it resolves: an explicit job id, and the workspace that owns the job.
+
 ## 1.0.12
 
 - A run no longer reports starting its Codex thread twice. `withAppServer` retries its whole callback when a requested broker is busy or gone, so the progress line the callback emitted first was emitted again on the direct retry; the review and task paths now emit it once, before the connection attempt.

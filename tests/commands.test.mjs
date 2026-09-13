@@ -50,7 +50,10 @@ test("review is a model-invokable skill that always backgrounds and keeps the ru
   // its own output file, so collection is a Read of that path — no job id, no
   // status --wait, no result command, no polling of any kind.
   assert.match(source, /Collect it when the notification arrives/);
-  assert.match(source, /`Read` the output file named in the launch response/);
+  assert.match(source, /pull the review out of the output file rather than reading the file whole/);
+  assert.match(source, /sed -n '\/\^# Codex \/,\$p'/);
+  // The whole file is still the right read when the run failed.
+  assert.match(source, /Reading the whole file is worth it when something went wrong/);
   assert.match(source, /Do not poll\. No `BashOutput` loop, no `\/codex:status` polling, no blocking wait/);
   assert.match(source, /Return the rendered review verbatim, exactly as-is/);
   assert.match(source, /Strip only the `\[codex\]` progress lines and the `\[exited with code N\]` marker/);
@@ -106,7 +109,10 @@ test("adversarial review is a model-invokable skill that always backgrounds and 
   // its own output file, so collection is a Read of that path — no job id, no
   // status --wait, no result command, no polling of any kind.
   assert.match(source, /Collect it when the notification arrives/);
-  assert.match(source, /`Read` the output file named in the launch response/);
+  assert.match(source, /pull the review out of the output file rather than reading the file whole/);
+  assert.match(source, /sed -n '\/\^# Codex \/,\$p'/);
+  // The whole file is still the right read when the run failed.
+  assert.match(source, /Reading the whole file is worth it when something went wrong/);
   assert.match(source, /Do not poll\. No `BashOutput` loop, no `\/codex:status` polling, no blocking wait/);
   assert.match(source, /Return the rendered review verbatim, exactly as-is/);
   assert.match(source, /Strip only the `\[codex\]` progress lines and the `\[exited with code N\]` marker/);
@@ -230,6 +236,11 @@ test("task is a single model-invokable skill that forwards to the task helper", 
   assert.match(taskSkill, /`--resume` → strip the token from the task text and pass `--resume-last`/i);
   // The helper owns the alias and the defaults; the skill must not restate them
   // as Claude-side mapping that can drift from scripts/codex-companion.mjs.
+  // A backgrounded task is collected from the id and log path the launch prints,
+  // not by hunting through /codex:status.
+  assert.match(taskSkill, /## Collecting a `--background` run/);
+  assert.match(taskSkill, /codex-companion\.mjs" result <job-id>/);
+  assert.match(taskSkill, /the stored result keeps `touchedFiles` but not the command list/);
   // Prompt shaping survives here, since this is where a Codex prompt is composed.
   assert.match(taskSkill, /Codex takes compact XML-block prompts/);
   assert.match(taskSkill, /`\/codex:codex-prompting` has the full templates/);
@@ -278,7 +289,12 @@ test("status stays model-invokable while transfer, cancel, and result are user-o
   // The helper is the fallback for a job this session did not launch; a job it
   // did launch is stopped by stopping its background shell.
   assert.match(cancel, /codex-companion\.mjs" cancel "<job-id>"/);
+  // No `!` preamble: prose meant for Claude used to be substituted straight into
+  // a shell argument, so `/codex:result <english sentence>` ran result "<first word>".
+  assert.equal(/^!`/m.test(result), false);
   assert.match(result, /codex-companion\.mjs" result "\$ARGUMENTS"/);
+  assert.match(result, /Pass an explicit job id/);
+  assert.match(result, /Run it from the workspace that owns the job/);
   assert.match(cancel, /StopTask/);
   assert.match(cancel, /Cancellation Consequences and Recommendation/);
   assert.match(resultHandling, /do not turn a failed or incomplete Codex run into a Claude-side implementation attempt/i);

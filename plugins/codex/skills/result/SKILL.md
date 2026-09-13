@@ -6,11 +6,20 @@ disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
 
-!`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" result "$ARGUMENTS"`
+Re-renders a finished job from the store on disk, so its output stays readable after the session that produced it. Run:
 
-This re-renders a job whose output already landed once, from the store on disk, so it stays readable after the session that produced it. Present the full command output to the user. Do not summarize or condense it. You may add one `## Claude's assessment` section after it when you have specific, evidence-backed disagreement or context; skip it when you only agree. Acting on what the result says follows whatever you were asked to do — this command reports, it does not decide that for you. Preserve all details including:
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" result "$ARGUMENTS"
+```
+
+Two things decide whether that resolves:
+
+- **Pass an explicit job id.** With no id it picks the latest *finished* job in this workspace, which is often not the one you meant — a review that finished after a task will win. `/codex:status` lists the ids, and a background launch prints its own id.
+- **Run it from the workspace that owns the job.** Lookup is scoped per workspace, so a correct id reports `No finished job found` from the wrong directory. Pass `--cwd <workspace>` when you are elsewhere.
+
+Present the full command output. Do not summarize or condense it. You may add one `## Claude's assessment` section after it when you have specific, evidence-backed disagreement or context; skip it when you only agree. Acting on what the result says follows whatever you were asked to do — this reports, it does not decide that for you. Preserve all details including:
 - Job ID and status
 - The complete result payload, including verdict, summary, findings, details, artifacts, and next steps
 - File paths and line numbers exactly as reported
 - Any error messages or parse errors
-- Follow-up commands such as `/codex:status <id>` and `/codex:review`
+- Follow-up commands such as `/codex:status <id>`

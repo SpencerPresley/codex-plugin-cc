@@ -51,6 +51,20 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task-resume-candidate -
 - If the helper reports `available: false`, do not ask. Route normally.
 - If the helper reports that Codex is missing or unauthenticated, stop and tell the user to run `/codex:setup`.
 
+## Collecting a `--background` run
+
+A foreground run needs none of this: its stdout is the answer. A backgrounded one returns immediately and prints both the job id and a `Live log:` path, so collecting it needs neither `/codex:status` nor a job-id hunt.
+
+- The rendered answer, plus the `codex resume <thread>` command for continuing the thread:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" result <job-id>
+```
+
+  Run it from the workspace that owns the job; lookup is per-workspace, so a correct id reports `No finished job found` from elsewhere. Pass an explicit id — with none it picks the newest finished job in the workspace, which may be a different run entirely.
+
+- The live log at the printed path is the fuller picture, and the only place some of it survives: every command Codex ran lands there, while the stored result keeps `touchedFiles` but not the command list. Read it when the run failed, when you need to know what it actually executed, or while it is still going. It is chronological and prefixed with timestamps, so `sed -n '/Final output$/,$p' <log>` gets just the answer and `grep 'Running command'` gets the command trace.
+
 ## Flag mapping — what reaches `task`
 
 - `--background` → `task --background`. The companion enqueues the run, prints the job id, and returns immediately; the user follows up with `/codex:status` and `/codex:result`. Prefer it for anything open-ended, multi-step, or long-running.
