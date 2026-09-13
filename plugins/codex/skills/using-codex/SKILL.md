@@ -55,23 +55,20 @@ Hands a task to Codex (debug, fix, implement, investigate, or continue prior Cod
 ### `/codex:setup` — readiness + review gate (user-invoked only)
 Checks Codex CLI install/auth. Point the user at it; you cannot run it. Can toggle the optional **stop-time review gate** (`--enable-review-gate` / `--disable-review-gate`) — when on, a `Stop` hook runs a Codex review of the previous turn and can block stopping until issues are addressed. The gate can create a long Claude↔Codex loop and burn usage; only enable it when actively watching.
 
-## Background always, then two ways to collect
+## Background always, collected by notification
 
 - Both reviews always run as background Bash tasks. There is no wait-vs-background decision and nothing to ask the user before starting one.
-- **Wait on it** when something depends on the findings — iterating until a branch is clean, or the user asked for the review inline. Block rather than poll: `/codex:status <id> --wait --timeout-ms <ms>`, then `/codex:result <id>`.
-- **Hand it off** when nobody is waiting: say it started and point the user at `/codex:status`.
-- Which one applies follows the request you were given; neither is the default, and a review nobody collects is wasted usage.
+- Backgrounding returns an output file path and promises a completion notification. That file ends up holding the fully rendered review, so collecting it is a `Read` of that path once the notification arrives.
+- Do not poll for it — no `BashOutput` loop, no repeated `/codex:status`, no blocking wait.
+- The file carries a few `[codex]` progress lines, then the review from its `# Codex ...` heading to the trailing `[exited with code N]` marker. Return what is between them verbatim.
 
-## Following up on a background job
+## Looking in on jobs
 
-You can invoke these yourself:
-- `/codex:status [id]` — progress and recent jobs (also shows review-gate status and each job's live log path).
-- `/codex:result [id]` — the final stored output of a finished job.
-
-Prefer `/codex:status <id> --wait --timeout-ms <ms>` over polling: one blocking call beats a poll loop. The status output names the job's log file, which is written line-by-line while the run is in flight — read it if you need to see what Codex is doing mid-run.
+`/codex:status [id]` is yours to invoke — progress, recent jobs, review-gate status, and each job's live log path, written line by line while a run is in flight. Use it to see what a still-running job is doing or to list jobs from an earlier session. You do not need it to collect a review you launched.
 
 These stay user-only, so route the user instead of invoking them:
-- `/codex:cancel [id]` — stops a running job and throws away in-flight work. With no id it reports each running job with the cost of cancelling it before anything is killed.
+- `/codex:result [id]` — re-renders a finished job's stored output. The user needs it because they never saw your completion notification; you already read the output file.
+- `/codex:cancel [id]` — stops a running job, and with no id reports what cancelling each one costs before anything is killed.
 - `/codex:transfer` — hands the user's Claude session to Codex.
 
 Jobs are tracked per workspace (max 50 retained). The default `/codex:status` view is scoped to the current Claude session; `--all` shows every retained job. Results survive the session that produced them — a job that was still running when a session ended is recorded as `interrupted`, not deleted. If a job id cannot be found, the error names the other plugin-install store it lives in rather than implying the run is gone.

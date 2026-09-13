@@ -47,16 +47,20 @@ Bash({
 })
 ```
 
-## 4. Get the result the way the work needs it
+## 4. Collect it when the notification arrives
 
-- Waiting on the findings — iterating until the branch is clean, or the user asked for the review inline: block on the job rather than polling it. `/codex:status <id> --wait --timeout-ms <ms>`, then `/codex:result <id>`. Do not poll `BashOutput` in a loop.
-- Handing off — the review was a parting request, or nobody is waiting on it: say "Codex adversarial review started in the background. Check `/codex:status` for progress." `/codex:status` lists this session's jobs, so neither of you needs to have captured the job id.
-- Which of those applies follows the request you were given. Neither is the default.
+Backgrounding the `Bash` call gives you an output file path and a promise of a completion notification. That file ends up holding the fully rendered review, so collection is just a `Read`:
+
+- Do not poll. No `BashOutput` loop, no `/codex:status` polling, no blocking wait — the notification is the signal.
+- When it arrives, `Read` the output file named in the launch response.
+- The file opens with a handful of `[codex] ...` progress lines, then the rendered review beginning at its `# Codex ...` heading. The review is everything from that heading to the trailing `[exited with code N]` marker.
+- A non-zero exit code, or a file with progress lines and no rendered review, means the run failed. Report that and the most actionable lines from the file; do not reconstruct what the review would have said.
+- Nothing here needs a job id. `/codex:status` is for looking in on a run mid-flight or listing jobs from an earlier session, not for collecting this one.
 
 ## 5. Report
 
-- Return the review output verbatim, exactly as-is, whether you read it from the job or from `/codex:result`.
-- Do not paraphrase, summarize, or rewrite it, and do not put anything before it.
+- Return the rendered review verbatim, exactly as-is.
+- Strip only the `[codex]` progress lines and the `[exited with code N]` marker. Do not paraphrase, summarize, or rewrite what is between them, and do not put anything before it.
 
 Assessment (optional, after the verbatim output):
 - You may add one section titled `## Claude's assessment` *after* the verbatim block, never before it and never interleaved.

@@ -91,7 +91,7 @@ Use it when you want:
 
 Use `--base <ref>` for branch review. It is not steerable and does not take custom focus text.
 
-It **always runs in the background** as a Claude Code background task, with nothing to answer before it starts. Follow it with `/codex:status` and `/codex:result`. Use [`/codex:adversarial-review`](#codexadversarial-review) when you want to challenge a specific decision or risk area.
+It **always runs in the background** as a Claude Code background task, with nothing to answer before it starts. Claude collects the result when the run notifies it; you can watch with [`/codex:status`](#codexstatus) or re-read it later with [`/codex:result`](#codexresult). Use [`/codex:adversarial-review`](#codexadversarial-review) when you want to challenge a specific decision or risk area.
 
 Examples:
 
@@ -111,7 +111,7 @@ It can be used to pressure-test assumptions, tradeoffs, failure modes, and wheth
 
 It uses the same review target selection as `/codex:review`, including `--base <ref>` for branch review. Unlike `/codex:review`, it can take extra focus text after the flags.
 
-It **always runs in the background** as a Claude Code background task, with nothing to answer before it starts. A challenge review reads the diff, the surrounding code, and often runs checks, so waiting on it buys nothing. Follow it with `/codex:status` and `/codex:result`.
+It **always runs in the background** as a Claude Code background task, with nothing to answer before it starts. A challenge review reads the diff, the surrounding code, and often runs checks, so waiting on it buys nothing. Claude collects the result when the run notifies it; you can watch with [`/codex:status`](#codexstatus) or re-read it later with [`/codex:result`](#codexresult).
 
 Use it when you want:
 
@@ -206,7 +206,7 @@ Use it to:
 
 By default it lists jobs from the current Claude session; pass `--all` to see every retained job for the repository. `/codex:status <id> --wait` blocks until that job finishes.
 
-Results outlive the session that produced them. Ending a Claude session settles anything still in flight — running jobs are stopped and recorded as `interrupted` — but finished results and their logs stay on disk (the most recent 50 jobs per repository). Claude can run `/codex:status` and `/codex:result` itself, so it can follow a background job it launched instead of handing you a job id and going quiet.
+Results outlive the session that produced them. Ending a Claude session settles anything still in flight — running jobs are stopped and recorded as `interrupted` — but finished results and their logs stay on disk (the most recent 50 jobs per repository). Claude does not need `/codex:result` to follow a review it launched — a backgrounded run notifies it and writes the rendered output to a file it reads directly. `/codex:result` is yours, for re-reading a finished job later; `/codex:status` is shared, for looking in on a run that is still going.
 
 ### `/codex:result`
 

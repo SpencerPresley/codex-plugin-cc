@@ -46,13 +46,15 @@ test("review is a model-invokable skill that always backgrounds and keeps the ru
   assert.match(source, /run_in_background:\s*true/);
   assert.match(source, /command:\s*`node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/codex-companion\.mjs" review "\$ARGUMENTS"`/);
   assert.match(source, /description:\s*"Codex review"/);
-  // Always-background means there is no foreground stdout to quote; the artifact
-  // is the review output, read from the job or from /codex:result.
-  assert.match(source, /Return the review output verbatim, exactly as-is, whether you read it from the job or from `\/codex:result`/);
-  // Neither getting-the-result path may be stated as the default: waiting vs
-  // handing off depends on what the caller was asked to do.
-  assert.match(source, /Which of those applies follows the request you were given. Neither is the default/);
-  assert.match(source, /Do not poll `BashOutput` in a loop/);
+  // A backgrounded run notifies on completion and writes the rendered review to
+  // its own output file, so collection is a Read of that path — no job id, no
+  // status --wait, no result command, no polling of any kind.
+  assert.match(source, /Collect it when the notification arrives/);
+  assert.match(source, /`Read` the output file named in the launch response/);
+  assert.match(source, /Do not poll\. No `BashOutput` loop, no `\/codex:status` polling, no blocking wait/);
+  assert.match(source, /Return the rendered review verbatim, exactly as-is/);
+  assert.match(source, /Strip only the `\[codex\]` progress lines and the `\[exited with code N\]` marker/);
+  assert.equal(/codex:result/.test(source), false);
 
   // The emptiness guard survives the removal of the sizing question.
   assert.match(source, /git status --short --untracked-files=all/);
@@ -100,13 +102,15 @@ test("adversarial review is a model-invokable skill that always backgrounds and 
   assert.match(source, /run_in_background:\s*true/);
   assert.match(source, /command:\s*`node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/codex-companion\.mjs" adversarial-review "\$ARGUMENTS"`/);
   assert.match(source, /description:\s*"Codex adversarial review"/);
-  // Always-background means there is no foreground stdout to quote; the artifact
-  // is the review output, read from the job or from /codex:result.
-  assert.match(source, /Return the review output verbatim, exactly as-is, whether you read it from the job or from `\/codex:result`/);
-  // Neither getting-the-result path may be stated as the default: waiting vs
-  // handing off depends on what the caller was asked to do.
-  assert.match(source, /Which of those applies follows the request you were given. Neither is the default/);
-  assert.match(source, /Do not poll `BashOutput` in a loop/);
+  // A backgrounded run notifies on completion and writes the rendered review to
+  // its own output file, so collection is a Read of that path — no job id, no
+  // status --wait, no result command, no polling of any kind.
+  assert.match(source, /Collect it when the notification arrives/);
+  assert.match(source, /`Read` the output file named in the launch response/);
+  assert.match(source, /Do not poll\. No `BashOutput` loop, no `\/codex:status` polling, no blocking wait/);
+  assert.match(source, /Return the rendered review verbatim, exactly as-is/);
+  assert.match(source, /Strip only the `\[codex\]` progress lines and the `\[exited with code N\]` marker/);
+  assert.equal(/codex:result/.test(source), false);
 
   // The emptiness guard survives the removal of the sizing question: auto scope
   // falls back to a branch diff on a clean tree, so nothing stops an empty run.
@@ -141,7 +145,6 @@ test("review documentation describes the unsandboxed repository-preserving contr
 test("continue is not exposed as a user-facing command", () => {
   const commandFiles = fs.readdirSync(path.join(PLUGIN_ROOT, "commands")).sort();
   assert.deepEqual(commandFiles, [
-    "result.md",
     "status.md",
     "transfer.md"
   ]);
@@ -219,9 +222,9 @@ test("task is a single user-invoked skill that forwards to the task helper", () 
   assert.match(readme, /user-invoked only/i);
 });
 
-test("transfer and cancel stay user-only while status and result are model-invokable", () => {
+test("status stays model-invokable while transfer, cancel, and result are user-only", () => {
   const transfer = read("commands/transfer.md");
-  const result = read("commands/result.md");
+  const result = read("skills/result/SKILL.md");
   const status = read("commands/status.md");
   const cancel = read("skills/cancel/SKILL.md");
   const resultHandling = read("skills/codex-result-handling/SKILL.md");
@@ -229,23 +232,29 @@ test("transfer and cancel stay user-only while status and result are model-invok
   // Cancel throws away in-flight work and transfer hands the user's own session
   // to another agent: both stay the user's call.
   assert.match(transfer, /disable-model-invocation:\s*true/);
+  assert.equal(/allowed-tools/.test(transfer), false);
   assert.match(cancel, /disable-model-invocation:\s*true/);
   assert.match(cancel, /^name: cancel$/m);
 
-  // Claude can launch a background job, so it must be able to follow that job to
-  // completion instead of handing the user a job id and going quiet.
+  // status is for looking in on a live run or listing older jobs; it is no longer
+  // the collect path, so its blocking wait is a fallback rather than the norm.
   assert.equal(/disable-model-invocation/.test(status), false);
-  assert.equal(/disable-model-invocation/.test(result), false);
-  assert.match(status, /--wait --timeout-ms/);
+  assert.equal(/allowed-tools/.test(status), false);
+  assert.match(status, /You do not need this to collect its output/);
   assert.match(status, /live log path/i);
+  // result re-renders what Claude already read from the notification's file, so
+  // it exists for the user, who never saw that notification.
+  assert.match(result, /^name: result$/m);
+  assert.match(result, /disable-model-invocation:\s*true/);
+  assert.match(result, /never saw your completion notification|stays readable after the session that produced it/);
 
   assert.match(transfer, /codex-companion\.mjs" transfer "\$ARGUMENTS"/);
   assert.match(transfer, /codex resume <session-id>/);
-  assert.match(result, /codex-companion\.mjs" result "\$ARGUMENTS"/);
   assert.match(status, /codex-companion\.mjs" status "\$ARGUMENTS"/);
   // The helper is the fallback for a job this session did not launch; a job it
   // did launch is stopped by stopping its background shell.
   assert.match(cancel, /codex-companion\.mjs" cancel "<job-id>"/);
+  assert.match(result, /codex-companion\.mjs" result "\$ARGUMENTS"/);
   assert.match(cancel, /StopTask/);
   assert.match(cancel, /Cancellation Consequences and Recommendation/);
   assert.match(resultHandling, /do not turn a failed or incomplete Codex run into a Claude-side implementation attempt/i);
@@ -261,7 +270,7 @@ test("review results can be contested by Claude, and acting on them is the calle
   for (const source of [review, adversarial]) {
     // The verbatim block still comes first and untouched; the assessment is
     // additive, not a rewrite.
-    assert.match(source, /Return the review output verbatim, exactly as-is/);
+    assert.match(source, /Return the rendered review verbatim, exactly as-is/);
     assert.match(source, /Claude's assessment/);
     assert.match(source, /never before it and never interleaved/i);
   }
