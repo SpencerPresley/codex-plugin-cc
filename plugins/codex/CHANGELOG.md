@@ -17,6 +17,9 @@ Context cost:
 
 Collaboration:
 
+- The review skills no longer assert what happens after findings land. What survives is the property of the run — Codex judges the work without rewriting it — while acting on the findings follows whatever the caller was asked to do. The old "review-only, do not fix, ask which findings the user wants fixed" wording came from a file that cannot see the caller's intent, and it fought any review-then-fix loop. Same change in `codex:using-codex` and `codex-result-handling`.
+- Both review skills now choose their target by invocation provenance rather than by whether arguments happen to be empty. Arguments win when present; with none, a user-typed invocation (identifiable by the `<command-name>` block in the turn) gets one `AskUserQuestion` with a git-state-based recommendation, while a `Skill` call Claude made itself picks the scope from git state and says so. Claude asking itself for targeting was the failure mode of keying on emptiness.
+
 - "Return Codex output verbatim" was reading as "be a pipe." Every place that states it now also states the counterpart: one `## Claude's assessment` section may follow the verbatim block when there is something checkable to add — a finding that can be disproved, a misread `file:line`, a missed consequence, a severity worth re-ranking — with the evidence attached, and omitted when the only thing to add is agreement. Two model families with different blind spots are the reason to run both.
 
 Accuracy:
@@ -52,6 +55,9 @@ Result integrity:
 - Subagent labels survive notifications that arrive before the turn is acknowledged.
 
 Collaboration:
+
+- The review skills no longer assert what happens after findings land. What survives is the property of the run — Codex judges the work without rewriting it — while acting on the findings follows whatever the caller was asked to do. The old "review-only, do not fix, ask which findings the user wants fixed" wording came from a file that cannot see the caller's intent, and it fought any review-then-fix loop. Same change in `codex:using-codex` and `codex-result-handling`.
+- Both review skills now choose their target by invocation provenance rather than by whether arguments happen to be empty. Arguments win when present; with none, a user-typed invocation (identifiable by the `<command-name>` block in the turn) gets one `AskUserQuestion` with a git-state-based recommendation, while a `Skill` call Claude made itself picks the scope from git state and says so. Claude asking itself for targeting was the failure mode of keying on emptiness.
 
 - Claude can invoke `/codex:status` and `/codex:result` to follow a background job it launched. `/codex:cancel` and `/codex:transfer` stay user-only.
 - Claude may append one `## Claude's assessment` section after a verbatim review, for evidence-backed disagreement. Applying fixes without asking remains forbidden.

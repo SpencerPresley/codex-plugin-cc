@@ -7,7 +7,7 @@ description: Use when running Codex reviews or delegating work through the Codex
 
 Codex is a second AI collaborator from another model family. Two shapes of use:
 
-- **Review** (`review`, `adversarial-review`) — repository-preserving critique that does not intentionally edit or fix the reviewed work.
+- **Review** (`review`, `adversarial-review`) — repository-preserving critique: the Codex run judges the work without rewriting it. Acting on the findings afterward is up to whatever you were asked to do.
 - **Delegate** (`task`) — **write-capable** work handed to Codex (debug, fix, implement, investigate). User-invoked only.
 
 In *this* build the review commands are model-invokable, so you (Claude) can run them directly.
@@ -16,7 +16,7 @@ In *this* build the review commands are model-invokable, so you (Claude) can run
 
 ## Critical rules (non-negotiable)
 
-- **Reviews are repository-preserving, not filesystem read-only.** Codex runs without filesystem sandboxing so it can use its full toolset. It must not intentionally edit or fix the reviewed work, but legitimate inspection and verification commands may create caches, logs, build output, coverage data, or scratch probes. Those incidental writes are acceptable and are not a reason to panic, abandon the review, or silently implement cleanup. After presenting findings, STOP and ask the user which findings, if any, to fix.
+- **Reviews are repository-preserving, not filesystem read-only.** Codex runs without filesystem sandboxing so it can use its full toolset. It must not intentionally edit or fix the reviewed work, but legitimate inspection and verification commands may create caches, logs, build output, coverage data, or scratch probes. Those incidental writes are acceptable and are not a reason to panic, abandon the review, or silently implement cleanup.
 - **Return Codex output verbatim.** No paraphrasing or summarizing of review or task output. Present findings ordered by severity, with file paths and line numbers exactly as reported. You may append one `## Claude's assessment` section *after* the verbatim block — see "Assessing the output" below.
 - **Know what intentionally writes.** `task` is write-capable and may edit the workspace. `review` and `adversarial-review` must not intentionally change reviewed files, configuration, the Git index, refs, or commits.
 - **Don't improvise auth.** If Codex isn't set up/authenticated, send the user to `/codex:setup`.
@@ -79,7 +79,7 @@ Jobs are tracked per workspace (max 50 retained). The default `/codex:status` vi
 
 Running a second model is only worth it if its output can be argued with. Verbatim is about not filtering what Codex said — it is not an instruction to be a pipe.
 
-After the verbatim block you may add one `## Claude's assessment` section when you have something checkable: a finding you can disprove, a `file:line` it misread, a consequence it missed, a severity you would rank differently, or — for a task run — a change you can show is wrong or incomplete. Attach the evidence each time: a path and line, or the command you ran and what it printed. Skip the section entirely when you only agree; restating agreement is noise. Never edit files off the back of a review without being asked.
+After the verbatim block you may add one `## Claude's assessment` section when you have something checkable: a finding you can disprove, a `file:line` it misread, a consequence it missed, a severity you would rank differently, or — for a task run — a change you can show is wrong or incomplete. Attach the evidence each time: a path and line, or the command you ran and what it printed. Skip the section entirely when you only agree; restating agreement is noise.
 
 ## Review output shape
 

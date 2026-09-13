@@ -18,7 +18,6 @@ When the helper returns Codex output:
 - If Codex made edits, say so explicitly and list the touched files when the helper provides them.
 - For `/codex:task`, do not turn a failed or incomplete Codex run into a Claude-side implementation attempt. Report the failure and stop.
 - For `/codex:task`, if Codex was never successfully invoked, do not generate a substitute answer at all.
-- CRITICAL: After presenting review findings, do not make any code changes. Do not fix any issues. You MUST explicitly ask the user which issues, if any, they want fixed before touching a single file. Auto-applying fixes from a review is strictly forbidden, even if the fix is obvious.
 - You may add one `## Claude's assessment` section after the verbatim output. Codex and Claude fail differently, and a review you cannot contest is worth less than one you can: use the section to name a finding you can show is wrong, a file:line the reviewer misread, a consequence it missed, or a severity you would rank differently. Attach the evidence — path and line, or the command you ran and what it printed.
 - Keep that section short, put it after the verbatim block, and leave it out entirely when you have nothing checkable to add. Restating agreement is noise.
 - If the helper reports malformed output or a failed Codex run, include the most actionable stderr lines and stop there instead of guessing.

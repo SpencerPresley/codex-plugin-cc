@@ -11,14 +11,22 @@ function read(relativePath) {
   return fs.readFileSync(path.join(PLUGIN_ROOT, relativePath), "utf8");
 }
 
-test("review is a model-invokable skill that always backgrounds while staying review-only", () => {
+test("review is a model-invokable skill that always backgrounds and keeps the run repo-preserving", () => {
   const source = read("skills/review/SKILL.md");
   assert.match(source, /^name: review$/m);
   // Always background, so no execution-mode question and no wait/background
   // flags to parse. Model-invokable: no disable-model-invocation.
   assert.equal(/allowed-tools/.test(source), false);
   assert.equal(/disable-model-invocation/.test(source), false);
-  assert.equal(/AskUserQuestion/.test(source), false);
+  // Args win when present. With no args the branch is by provenance, not by
+  // emptiness: a user-typed invocation carries a <command-name> block, a Skill
+  // call of Claude's own does not — so Claude never interrupts itself.
+  assert.match(source, /Arguments provided: run with them exactly as given/);
+  assert.match(source, /No arguments, and \*\*you\*\* invoked this skill: do not ask/);
+  assert.match(source, /No arguments, and \*\*the user\*\* invoked it bare: ask once with `AskUserQuestion`/);
+  assert.match(source, /a user-typed invocation puts a `<command-name>` block for this skill in the turn/);
+  assert.match(source, /\(Recommended\)/);
+  assert.match(source, /^argument-hint:/m);
   // The helper parses --wait/--background for reviews and then ignores them, so
   // the skill must not mention flags that do nothing. `/codex:status --wait` is
   // a different command's real flag and stays.
@@ -29,9 +37,10 @@ test("review is a model-invokable skill that always backgrounds while staying re
   assert.match(source, /argument-hint: '\[--base <ref>\] \[--scope auto\|working-tree\|branch\]'/);
   assert.match(source, /Always launch it as a background Bash task/i);
 
-  assert.match(source, /Do not fix issues/i);
-  assert.match(source, /review-only/i);
-  assert.match(source, /return Codex's output verbatim to the user/i);
+  // The run is repository-preserving; what the caller does with the findings is
+  // deliberately not this skill's business (it cannot see the caller's intent).
+  assert.match(source, /The run itself is repository-preserving/);
+  assert.equal(/review-only|Do not fix issues|ask which findings/i.test(source), false);
   assert.match(source, /```typescript/);
   assert.match(source, /review "\$ARGUMENTS"/);
   assert.match(source, /run_in_background:\s*true/);
@@ -49,15 +58,23 @@ test("review is a model-invokable skill that always backgrounds while staying re
   assert.match(source, /does not support staged-only review, unstaged-only review, or extra focus text/i);
 });
 
-test("adversarial review is a model-invokable skill that always backgrounds while staying review-only", () => {
+test("adversarial review is a model-invokable skill that always backgrounds and keeps the run repo-preserving", () => {
   const source = read("skills/adversarial-review/SKILL.md");
   assert.match(source, /^name: adversarial-review$/m);
   // Always background, so no execution-mode question and no wait/background
   // flags to parse. Model-invokable: no disable-model-invocation.
   assert.equal(/allowed-tools/.test(source), false);
   assert.equal(/disable-model-invocation/.test(source), false);
-  assert.equal(/AskUserQuestion/.test(source), false);
   assert.match(source, /argument-hint: '\[--base <ref>\] \[--scope auto\|working-tree\|branch\] \[focus \.\.\.\]'/);
+  // Args win when present. With no args the branch is by provenance, not by
+  // emptiness: a user-typed invocation carries a <command-name> block, a Skill
+  // call of Claude's own does not — so Claude never interrupts itself.
+  assert.match(source, /Arguments provided: run with them exactly as given/);
+  assert.match(source, /No arguments, and \*\*you\*\* invoked this skill: do not ask/);
+  assert.match(source, /No arguments, and \*\*the user\*\* invoked it bare: ask once with `AskUserQuestion`/);
+  assert.match(source, /a user-typed invocation puts a `<command-name>` block for this skill in the turn/);
+  assert.match(source, /Focus text counts as arguments/);
+  assert.match(source, /\(Recommended\)/);
   assert.match(source, /Always launch it as a background Bash task/i);
   // The helper parses --wait/--background for reviews and then ignores them, so
   // the skill must not mention flags that do nothing. `/codex:status --wait` is
@@ -67,9 +84,10 @@ test("adversarial review is a model-invokable skill that always backgrounds whil
     assert.match(line, /\/codex:status/, `stray --wait outside /codex:status: ${line}`);
   }
 
-  assert.match(source, /Do not fix issues/i);
-  assert.match(source, /review-only/i);
-  assert.match(source, /return Codex's output verbatim to the user/i);
+  // The run is repository-preserving; what the caller does with the findings is
+  // deliberately not this skill's business (it cannot see the caller's intent).
+  assert.match(source, /The run itself is repository-preserving/);
+  assert.equal(/review-only|Do not fix issues|ask which findings/i.test(source), false);
   assert.match(source, /```typescript/);
   assert.match(source, /adversarial-review "\$ARGUMENTS"/);
   assert.match(source, /run_in_background:\s*true/);
@@ -222,7 +240,7 @@ test("transfer and cancel stay user-only while status and result are model-invok
   assert.match(resultHandling, /if Codex was never successfully invoked, do not generate a substitute answer at all/i);
 });
 
-test("review results can be contested by Claude without being edited", () => {
+test("review results can be contested by Claude, and acting on them is the caller's call", () => {
   const resultHandling = read("skills/codex-result-handling/SKILL.md");
   const usingCodex = read("skills/using-codex/SKILL.md");
   const review = read("skills/review/SKILL.md");
@@ -234,7 +252,6 @@ test("review results can be contested by Claude without being edited", () => {
     assert.match(source, /Return the command stdout verbatim, exactly as-is/);
     assert.match(source, /Claude's assessment/);
     assert.match(source, /never before it and never interleaved/i);
-    assert.match(source, /Still do not edit anything/i);
   }
 
   assert.match(resultHandling, /Claude's assessment/);
@@ -248,8 +265,13 @@ test("review results can be contested by Claude without being edited", () => {
   // Hidden from the model, still runnable by the user.
   assert.match(resultHandling, /^disable-model-invocation: true$/m);
   assert.equal(/user-invocable/.test(resultHandling), false);
-  // Auto-applying fixes remains forbidden even though commentary is allowed.
-  assert.match(resultHandling, /Auto-applying fixes from a review is strictly forbidden/);
+  // Whether to act on findings belongs to the caller, so no surface asserts a
+  // blanket fix prohibition any more.
+  for (const source of [resultHandling, usingCodex, review, adversarial]) {
+    assert.equal(/Auto-applying fixes|strictly forbidden|STOP and ask|Never auto-apply/i.test(source), false);
+  }
+  // The property of the run itself does survive.
+  assert.match(usingCodex, /repository-preserving critique: the Codex run judges the work without rewriting it/);
 });
 
 test("internal docs use task terminology throughout", () => {
