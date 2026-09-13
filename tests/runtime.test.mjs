@@ -2419,9 +2419,13 @@ test("setup and status honor --cwd when reading shared session runtime", () => {
   const targetWorkspace = makeTempDir();
   const invocationWorkspace = makeTempDir();
 
-  saveBrokerSession(targetWorkspace, {
-    endpoint: "unix:/tmp/fake-broker.sock"
-  });
+  // The record has to look alive, or it is correctly discarded as a leftover:
+  // this test is about --cwd resolution, not about liveness. A pid we know is
+  // running plus a socket path that exists is the cheapest honest fixture.
+  const socketPath = path.join(makeTempDir(), "broker.sock");
+  fs.writeFileSync(socketPath, "");
+  const endpoint = `unix:${socketPath}`;
+  saveBrokerSession(targetWorkspace, { endpoint, pid: process.pid });
 
   const status = run("node", [SCRIPT, "status", "--cwd", targetWorkspace], {
     cwd: invocationWorkspace
@@ -2435,7 +2439,7 @@ test("setup and status honor --cwd when reading shared session runtime", () => {
   assert.equal(setup.status, 0, setup.stderr);
   const payload = JSON.parse(setup.stdout);
   assert.equal(payload.sessionRuntime.mode, "shared");
-  assert.equal(payload.sessionRuntime.endpoint, "unix:/tmp/fake-broker.sock");
+  assert.equal(payload.sessionRuntime.endpoint, endpoint);
 });
 
 test("transfer derives the transcript from the Claude session id when the hook never recorded it", () => {

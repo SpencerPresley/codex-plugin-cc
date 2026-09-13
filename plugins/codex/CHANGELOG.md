@@ -2,6 +2,11 @@
 
 ## 1.0.10
 
+Reliability:
+
+- A recorded shared broker is no longer trusted on sight. `loadBrokerSession` now checks that the pid is alive and the socket still exists, deletes the record when neither holds, and reports no broker — so a session that dies without running its `SessionEnd` teardown cannot make `/codex:setup` call a working Codex install unready. Found the hard way: a single leftover `broker.json` pointing at a dead pid failed six `setup` tests, and removing it fixed all six.
+- A pid that exists but is owned by another user (`EPERM`) is not treated as death, and a missing socket is, since a broker that never started or was reaped leaves none.
+
 Layout:
 
 - `codex:using-codex` is gone. It was the most-invoked skill in the transcripts (50 times) almost entirely because other skills instructed Claude to load the manual first, and by this release roughly everything in it was a second copy of what the skill being run already said. Its four genuinely unique pieces moved to where they are used: the unsandboxed/incidental-writes contract and the output-interpretation rules (no verdict on an interrupted run, what `Assessment moved:` means) into both review skills; the XML-block prompt guidance into `codex:task`, which is where a Codex prompt actually gets composed; job retention and `--all` bookkeeping into `codex:status`.

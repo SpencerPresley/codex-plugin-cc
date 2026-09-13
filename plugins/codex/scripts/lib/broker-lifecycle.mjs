@@ -73,17 +73,67 @@ function resolveBrokerStateFile(cwd) {
   return path.join(resolveStateDir(cwd), BROKER_STATE_FILE);
 }
 
-export function loadBrokerSession(cwd) {
+/**
+ * True when a recorded broker could still be serving: its process is alive and
+ * its socket is still on disk. A record that fails either test is a leftover
+ * from a session that died without running its SessionEnd teardown.
+ */
+export function isBrokerSessionUsable(session, options = {}) {
+  if (!session) {
+    return false;
+  }
+
+  const signalImpl = options.signalImpl ?? ((pid) => process.kill(pid, 0));
+  const existsImpl = options.existsImpl ?? ((file) => fs.existsSync(file));
+
+  if (typeof session.pid === "number") {
+    try {
+      signalImpl(session.pid);
+    } catch (error) {
+      if (error?.code === "ESRCH") {
+        return false;
+      }
+      // EPERM means the pid exists but belongs to someone else; anything else is
+      // not evidence of death, so keep the record.
+    }
+  }
+
+  if (typeof session.endpoint === "string") {
+    const target = parseBrokerEndpoint(session.endpoint);
+    if (target?.path && !existsImpl(target.path)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export function loadBrokerSession(cwd, options = {}) {
   const stateFile = resolveBrokerStateFile(cwd);
   if (!fs.existsSync(stateFile)) {
     return null;
   }
 
+  let session;
   try {
-    return JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    session = JSON.parse(fs.readFileSync(stateFile, "utf8"));
   } catch {
     return null;
   }
+
+  // A dead record must not be reported as a live broker: callers would try to
+  // reuse a socket nobody is listening on, and `setup` would call a working
+  // Codex install unready. Drop it so the next run starts clean.
+  if (!isBrokerSessionUsable(session, options)) {
+    try {
+      fs.rmSync(stateFile, { force: true });
+    } catch {
+      // A record we cannot delete is still a record we refuse to use.
+    }
+    return null;
+  }
+
+  return session;
 }
 
 export function saveBrokerSession(cwd, session) {
