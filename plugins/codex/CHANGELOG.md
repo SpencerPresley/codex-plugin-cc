@@ -4,6 +4,8 @@
 
 Layout:
 
+- `codex:using-codex` is gone. It was the most-invoked skill in the transcripts (50 times) almost entirely because other skills instructed Claude to load the manual first, and by this release roughly everything in it was a second copy of what the skill being run already said. Its four genuinely unique pieces moved to where they are used: the unsandboxed/incidental-writes contract and the output-interpretation rules (no verdict on an interrupted run, what `Assessment moved:` means) into both review skills; the XML-block prompt guidance into `codex:task`, which is where a Codex prompt actually gets composed; job retention and `--all` bookkeeping into `codex:status`.
+
 - `plugins/codex/commands/` no longer exists. Every surface is a skill under `skills/`, because a command and a skill are the same mechanism in Claude Code: both are invokable by the `Skill` tool, both can be typed as `/codex:<name>`, both read `argument-hint` and `$ARGUMENTS`, and `disable-model-invocation` governs model access in either directory. Keeping two directories for one mechanism only made it easy for the two halves to drift, which is what the rest of this release spent its time undoing.
 
 Context cost:

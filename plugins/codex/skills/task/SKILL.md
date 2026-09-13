@@ -26,6 +26,8 @@ Codex does the thinking. Yours is to make sure it starts with everything this se
 
 The task text is the user's, minus routing flags — preserve it as-is apart from stripping those. You may sharpen it into a tighter Codex prompt: state the exact job and its scope, the smallest output contract that answers it, and the boundaries the run must respect. Codex is concise and proactive by default, so drop supervision scaffolding rather than adding it.
 
+Codex takes compact XML-block prompts. Always `<task>` (the exact job and its scope) plus the smallest output contract that answers it (`<structured_output_contract>` or `<compact_output_contract>`). Add only what the job needs: `<default_follow_through_policy>` (act vs stop and ask), `<verification_loop>` (correctness), `<grounding_rules>` (don't invent — research and review), `<action_safety>` (write-capable or broad work), `<missing_context_gating>` (don't guess). Avoid vague framing ("take a look"), no output contract, unrelated jobs in one run, asking for "more reasoning" instead of a tighter contract, and blanket always/never for judgment calls. One job per run. `/codex:codex-prompting` has the full templates.
+
 You may attach what this session already established — the failing command and its output, files already read, hypotheses already ruled out — in a `<handoff_context>` block. Mark that context unverified so Codex checks it instead of inheriting it.
 
 `--with-session` is the stronger form of the same idea: it imports the whole Claude transcript into the Codex thread before the task runs, so Codex starts from the real investigation rather than a summary of it. Use it when the task depends on the conversation so far; skip it for a self-contained ask. It cannot be combined with `--resume`.

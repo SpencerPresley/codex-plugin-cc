@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Codex Prompting
 
-Reference for shaping a Codex task prompt. Model invocation is disabled, so this stays out of context until the user runs `/codex:codex-prompting`; `codex:using-codex` carries the condensed version Claude works from.
+Reference for shaping a Codex task prompt. Model invocation is disabled, so this stays out of context until the user runs `/codex:codex-prompting`; `codex:task` carries the condensed version Claude works from.
 
 Codex is a capable collaborator working the same problem you are, not a tool you configure. Give it the job, what "done" looks like, and the boundaries that matter — then let it work. The prompt's job is to remove ambiguity, not to supervise.
 

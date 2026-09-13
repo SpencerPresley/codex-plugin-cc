@@ -6,8 +6,9 @@ This plugin is for Claude Code users who want an easy way to start using Codex f
 they already have.
 
 This is a Spencer-maintained fork/distribution of OpenAI's Apache-2.0 Codex plugin for Claude Code.
-It is not an official OpenAI marketplace. This fork keeps local workflow edits, including the
-`using-codex` skill and model-invokable review commands.
+It is not an official OpenAI marketplace. This fork keeps local workflow edits, including
+model-invokable reviews that always run in the background, and a single `skills/` directory
+for every surface.
 
 <video src="./docs/plugin-demo.webm" controls muted playsinline autoplay></video>
 

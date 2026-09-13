@@ -9,7 +9,9 @@ Run a Codex review through the shared built-in reviewer.
 Arguments, whether the user typed them after the slash command or you passed them as the `Skill` tool's `args`:
 `$ARGUMENTS`
 
-The run itself is repository-preserving: Codex reviews the work, it does not rewrite it. What happens after the findings land is the caller's business, not this skill's.
+The run is repository-preserving: Codex reviews the work, it does not rewrite it. What happens after the findings land is the caller's business, not this skill's.
+
+Repository-preserving is not filesystem-read-only, though. Codex runs without filesystem sandboxing so it can use its full toolset, and legitimate inspection may leave caches, logs, build output, coverage data, or scratch probes in a temporary directory. Those incidental artifacts do not invalidate the review and are not worth cleaning up or panicking over. What it must not do is run commands whose purpose is to rewrite the reviewed work — `ruff check --fix`, formatters, snapshot updates, codemods, lockfile-updating installs.
 
 ## 1. Read the git state
 
@@ -55,7 +57,9 @@ Backgrounding the `Bash` call gives you an output file path and a promise of a c
 
 ## 5. Report
 
-- Return the rendered review verbatim, exactly as-is.
+- Return the rendered review verbatim, exactly as-is, findings in the severity order Codex gave them, with its confidence and any inference/uncertainty markers intact.
+- An interrupted run has **no** verdict. The output labels the reviewer's last interim message as not a verdict; do not report it as one.
+- An `Assessment moved: approve -> needs-attention (final)` line means the reviewer's verdict changed mid-run. Pass it through — it is signal about how settled the final verdict is.
 - Strip only the `[codex]` progress lines and the `[exited with code N]` marker. Do not paraphrase, summarize, or rewrite what is between them, and do not put anything before it.
 
 Assessment (optional, after the verbatim output):

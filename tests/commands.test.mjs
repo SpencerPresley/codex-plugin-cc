@@ -39,7 +39,7 @@ test("review is a model-invokable skill that always backgrounds and keeps the ru
 
   // The run is repository-preserving; what the caller does with the findings is
   // deliberately not this skill's business (it cannot see the caller's intent).
-  assert.match(source, /The run itself is repository-preserving/);
+  assert.match(source, /The run is repository-preserving/);
   assert.equal(/review-only|Do not fix issues|ask which findings/i.test(source), false);
   assert.match(source, /```typescript/);
   assert.match(source, /review "\$ARGUMENTS"/);
@@ -95,7 +95,7 @@ test("adversarial review is a model-invokable skill that always backgrounds and 
 
   // The run is repository-preserving; what the caller does with the findings is
   // deliberately not this skill's business (it cannot see the caller's intent).
-  assert.match(source, /The run itself is repository-preserving/);
+  assert.match(source, /The run is repository-preserving/);
   assert.equal(/review-only|Do not fix issues|ask which findings/i.test(source), false);
   assert.match(source, /```typescript/);
   assert.match(source, /adversarial-review "\$ARGUMENTS"/);
@@ -125,20 +125,20 @@ test("adversarial review is a model-invokable skill that always backgrounds and 
 });
 
 test("review documentation describes the unsandboxed repository-preserving contract", () => {
-  const skill = read("skills/using-codex/SKILL.md");
   const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
+  const sources = [
+    read("skills/review/SKILL.md"),
+    read("skills/adversarial-review/SKILL.md"),
+    readme
+  ];
 
-  assert.match(skill, /^description: Use when /m);
-  for (const source of [skill, readme]) {
-    assert.match(source, /without filesystem sandboxing/i);
+  for (const source of sources) {
+    assert.match(source, /without filesystem sandboxing|runs unsandboxed/i);
     assert.match(source, /repository-preserving/i);
     assert.match(source, /incidental/i);
     assert.match(source, /scratch|temporary directory/i);
-    assert.match(source, /does not intentionally (?:edit|alter)|must not intentionally edit/i);
+    assert.doesNotMatch(source, /Reviews are READ-ONLY/i);
   }
-
-  assert.doesNotMatch(skill, /Reviews are READ-ONLY/i);
-  assert.doesNotMatch(skill, /review \(read-only\)|challenge review \(read-only\)/i);
   assert.doesNotMatch(readme, /This command is read-only/i);
 });
 
@@ -157,8 +157,7 @@ test("every surface is a skill, and continue is not exposed at all", () => {
     "setup",
     "status",
     "task",
-    "transfer",
-    "using-codex"
+    "transfer"
   ]);
   for (const skill of skills) {
     assert.ok(
@@ -229,6 +228,9 @@ test("task is a single user-invoked skill that forwards to the task helper", () 
   assert.match(taskSkill, /`--resume` → strip the token from the task text and pass `--resume-last`/i);
   // The helper owns the alias and the defaults; the skill must not restate them
   // as Claude-side mapping that can drift from scripts/codex-companion.mjs.
+  // Prompt shaping survives here, since this is where a Codex prompt is composed.
+  assert.match(taskSkill, /Codex takes compact XML-block prompts/);
+  assert.match(taskSkill, /`\/codex:codex-prompting` has the full templates/);
   assert.match(taskSkill, /the helper owns that alias \(`spark` → `gpt-5\.3-codex-spark`\)/i);
   assert.match(taskSkill, /`--effort` → pass through/i);
   assert.match(taskSkill, /unset sends `effort: null`, so `model_reasoning_effort` from the user's Codex config applies/i);
@@ -283,7 +285,6 @@ test("status stays model-invokable while transfer, cancel, and result are user-o
 
 test("review results can be contested by Claude, and acting on them is the caller's call", () => {
   const resultHandling = read("skills/codex-result-handling/SKILL.md");
-  const usingCodex = read("skills/using-codex/SKILL.md");
   const review = read("skills/review/SKILL.md");
   const adversarial = read("skills/adversarial-review/SKILL.md");
 
@@ -297,22 +298,25 @@ test("review results can be contested by Claude, and acting on them is the calle
 
   assert.match(resultHandling, /Claude's assessment/);
   assert.match(resultHandling, /Attach the evidence/i);
-  assert.match(usingCodex, /Assessing the output/);
-  assert.match(usingCodex, /Verbatim is about not filtering what Codex said — it is not an instruction to be a pipe/);
-  // The rules that only lived in the hidden reference now live where Claude
-  // will actually read them.
-  assert.match(usingCodex, /If Codex edited files, state that and list the touched files/i);
-  assert.match(usingCodex, /surface the most actionable stderr lines and stop there/i);
+  // using-codex is gone; the rules that were only there now live in the skills
+  // that actually run, and in the user-invoked reference.
+  assert.equal(fs.existsSync(path.join(PLUGIN_ROOT, "skills", "using-codex")), false);
+  assert.match(resultHandling, /If Codex made edits, say so explicitly and list the touched files/i);
+  assert.match(resultHandling, /include the most actionable stderr lines and stop there/i);
   // Hidden from the model, still runnable by the user.
   assert.match(resultHandling, /^disable-model-invocation: true$/m);
   assert.equal(/user-invocable/.test(resultHandling), false);
   // Whether to act on findings belongs to the caller, so no surface asserts a
   // blanket fix prohibition any more.
-  for (const source of [resultHandling, usingCodex, review, adversarial]) {
+  for (const source of [resultHandling, review, adversarial]) {
     assert.equal(/Auto-applying fixes|strictly forbidden|STOP and ask|Never auto-apply/i.test(source), false);
   }
-  // The property of the run itself does survive.
-  assert.match(usingCodex, /repository-preserving critique: the Codex run judges the work without rewriting it/);
+  // The property of the run itself does survive, in both review skills.
+  for (const source of [review, adversarial]) {
+    assert.match(source, /Repository-preserving is not filesystem-read-only, though/);
+    assert.match(source, /An interrupted run has \*\*no\*\* verdict/);
+    assert.match(source, /`Assessment moved: approve -> needs-attention \(final\)` line means/);
+  }
 });
 
 test("internal docs use task terminology throughout", () => {

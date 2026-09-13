@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Codex Result Handling
 
-Full reference for presenting Codex output. Model invocation is off, so this loads only when the user runs `/codex:codex-result-handling`; `codex:using-codex` carries the rules Claude works from.
+Full reference for presenting Codex output. Model invocation is off, so this loads only when the user runs `/codex:codex-result-handling`; the report steps in `codex:review`, `codex:adversarial-review`, and `codex:task` carry the rules Claude works from.
 
 When the helper returns Codex output:
 - Preserve the helper's verdict, summary, findings, and next steps structure.

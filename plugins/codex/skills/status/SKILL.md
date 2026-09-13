@@ -19,3 +19,8 @@ If you launched the job yourself:
 - You do not need this to collect its output. A backgrounded run notifies you when it finishes and writes the rendered result to its own output file; read that instead.
 - Use this to look in on a run that is still going — the output includes the job's live log path, written line by line while the run is in flight.
 - If you genuinely have to wait on a job rather than collect a notification, block once with `/codex:status <id> --wait --timeout-ms <ms>` instead of polling repeatedly.
+
+Job bookkeeping:
+- Jobs are tracked per workspace, most recent 50 retained. The default view is scoped to the current Claude session; `--all` shows every retained job.
+- Results outlive the session that produced them. A job still running when a session ended is recorded as `interrupted`, not deleted.
+- If a job id cannot be found, the error names the other plugin-install store it lives in rather than implying the run is gone.
