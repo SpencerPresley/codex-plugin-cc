@@ -134,7 +134,7 @@ This command is repository-preserving: it runs Codex without filesystem sandboxi
 
 Hands a task to Codex. The command runs in your main session: Claude builds one `codex-companion.mjs task` call, hands over the request plus whatever the session already established, and returns Codex's output verbatim — optionally followed by one `## Claude's assessment` section when Claude has something checkable to add.
 
-This command is **user-invoked only** (`disable-model-invocation`), so Claude cannot start a Codex task on its own and the command stays out of Claude's context until you type it. Claude can suggest a handoff; you decide.
+Claude can run this itself as well as you typing it, so it can hand a substantial, clearly-bounded piece of work to Codex without waiting to be asked. It is **write-capable** by default: Codex may edit the workspace.
 
 Use it when you want Codex to:
 

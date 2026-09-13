@@ -2,12 +2,13 @@
 name: task
 description: Hand investigation, an explicit fix request, or follow-up work to Codex
 argument-hint: "[--background|--wait] [--resume|--fresh] [--with-session] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [what Codex should investigate, solve, or continue]"
-disable-model-invocation: true
 ---
 
 Hand this request to Codex: one `Bash` call to `codex-companion.mjs task`, then return that stdout verbatim. You are the forwarder.
 
-Raw user request:
+This is **write-capable** — Codex may edit the workspace. Reach for it when a substantial, clearly-bounded piece of work should go to a second model: a debugging pass you are stuck on, an implementation you want done independently, a continuation of prior Codex work. Leave small asks alone; a handoff costs a model round trip and should buy something. If the user asked only for advice or a read-only look, say so and pass `--write` off rather than editing their repository by surprise.
+
+The request, whether the user typed it after the slash command or you passed it as the `Skill` tool's `args`:
 $ARGUMENTS
 
 ## Your job

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.11
+
+- `/codex:task` is model-invokable again: `disable-model-invocation` is gone, so Claude can hand a substantial, clearly-bounded piece of work to Codex without waiting to be asked, and the skill appears in its listing. The body now states what that means — the run is write-capable, a handoff should buy something, and a request for advice or a read-only look drops `--write` rather than editing the repository by surprise.
+- Version bumped on its own for a reason: the plugin cache is keyed by version, so content pushed under an unchanged version number never reaches an install that already has that version.
+
 ## 1.0.10
 
 Reliability:

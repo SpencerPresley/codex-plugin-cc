@@ -167,7 +167,7 @@ test("every surface is a skill, and continue is not exposed at all", () => {
   }
 });
 
-test("task is a single user-invoked skill that forwards to the task helper", () => {
+test("task is a single model-invokable skill that forwards to the task helper", () => {
   const taskSkill = read("skills/task/SKILL.md");
   const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
 
@@ -182,7 +182,9 @@ test("task is a single user-invoked skill that forwards to the task helper", () 
   assert.equal(/codex-rescue|subagent|Agent tool/i.test(taskSkill), false);
 
   // User-invoked only: it stays out of Claude's context until the user types it.
-  assert.match(taskSkill, /^disable-model-invocation: true$/m);
+  // Model-invokable: Claude may hand work to Codex without being asked to.
+  assert.equal(/disable-model-invocation/.test(taskSkill), false);
+  assert.match(taskSkill, /This is \*\*write-capable\*\*/);
   assert.match(taskSkill, /^name: task$/m);
   // No allowed-tools: this body runs in the user's main session, where an
   // allowlist would clamp the whole turn's tools, not just this step.
@@ -239,7 +241,7 @@ test("task is a single user-invoked skill that forwards to the task helper", () 
 
   assert.match(readme, /### `\/codex:task`/);
   assert.equal(/codex:codex-rescue/.test(readme), false);
-  assert.match(readme, /user-invoked only/i);
+  assert.match(readme, /Claude can run this itself/i);
 });
 
 test("status stays model-invokable while transfer, cancel, and result are user-only", () => {
