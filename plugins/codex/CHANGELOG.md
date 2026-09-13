@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.12
+
+- A run no longer reports starting its Codex thread twice. `withAppServer` retries its whole callback when a requested broker is busy or gone, so the progress line the callback emitted first was emitted again on the direct retry; the review and task paths now emit it once, before the connection attempt.
+- That duplicate was the only visible sign of a broker fallback, so the fallback now says so: `Shared app-server unavailable; reconnecting directly for this run.` Silently degrading to a direct connection is worth a line, since it means something is pointing at a broker that is not there.
+
 ## 1.0.11
 
 - `/codex:task` is model-invokable again: `disable-model-invocation` is gone, so Claude can hand a substantial, clearly-bounded piece of work to Codex without waiting to be asked, and the skill appears in its listing. The body now states what that means — the run is write-capable, a handoff should buy something, and a request for advice or a read-only look drops `--write` rather than editing the repository by surprise.

@@ -1,7 +1,7 @@
 {
   "name": "codex",
   "displayName": "Spencer Codex",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "Use Codex from Claude Code to review code or delegate tasks.",
   "author": {
     "name": "OpenAI, modified by Spencer Presley"

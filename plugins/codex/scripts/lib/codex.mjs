@@ -690,7 +690,13 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
   }
 }
 
-async function withAppServer(cwd, fn) {
+/**
+ * Runs `fn` against an app-server client, falling back to a direct connection
+ * when a requested broker is busy or gone. `onProgress` is optional and exists
+ * so that fallback is visible: without it the only symptom is the retried
+ * callback repeating whatever progress it emitted first.
+ */
+async function withAppServer(cwd, fn, onProgress = null) {
   let client = null;
   try {
     client = await CodexAppServerClient.connect(cwd);
@@ -712,6 +718,11 @@ async function withAppServer(cwd, fn) {
       throw error;
     }
 
+    emitProgress(
+      onProgress,
+      "Shared app-server unavailable; reconnecting directly for this run.",
+      "starting"
+    );
     const directClient = await CodexAppServerClient.connect(cwd, { disableBroker: true });
     try {
       return await fn(directClient);
@@ -1085,8 +1096,9 @@ export async function runAppServerReview(cwd, options = {}) {
     throw new Error("Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/codex:setup`.");
   }
 
+  emitProgress(options.onProgress, "Starting Codex review thread.", "starting");
+
   return withAppServer(cwd, async (client) => {
-    emitProgress(options.onProgress, "Starting Codex review thread.", "starting");
     const thread = await startThread(client, cwd, {
       model: options.model,
       sandbox: "danger-full-access",
@@ -1133,7 +1145,7 @@ export async function runAppServerReview(cwd, options = {}) {
       error: turnState.error,
       stderr: cleanCodexStderr(client.stderr)
     };
-  });
+  }, options.onProgress);
 }
 
 export async function importExternalAgentSession(cwd, options = {}) {
@@ -1179,11 +1191,18 @@ export async function runAppServerTurn(cwd, options = {}) {
     throw new Error("Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/codex:setup`.");
   }
 
+  // Emitted before the connection attempt so a broker fallback, which re-runs
+  // this callback, cannot report the same start twice.
+  emitProgress(
+    options.onProgress,
+    options.resumeThreadId ? `Resuming thread ${options.resumeThreadId}.` : "Starting Codex task thread.",
+    "starting"
+  );
+
   return withAppServer(cwd, async (client) => {
     let threadId;
 
     if (options.resumeThreadId) {
-      emitProgress(options.onProgress, `Resuming thread ${options.resumeThreadId}.`, "starting");
       const response = await resumeThread(client, options.resumeThreadId, cwd, {
         model: options.model,
         sandbox: options.sandbox,
@@ -1191,7 +1210,6 @@ export async function runAppServerTurn(cwd, options = {}) {
       });
       threadId = response.thread.id;
     } else {
-      emitProgress(options.onProgress, "Starting Codex task thread.", "starting");
       const response = await startThread(client, cwd, {
         model: options.model,
         sandbox: options.sandbox,
@@ -1238,7 +1256,7 @@ export async function runAppServerTurn(cwd, options = {}) {
       touchedFiles: collectTouchedFiles(turnState.fileChanges),
       commandExecutions: turnState.commandExecutions
     };
-  });
+  }, options.onProgress);
 }
 
 export async function findLatestTaskThread(cwd) {
